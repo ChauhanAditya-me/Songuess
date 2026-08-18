@@ -211,6 +211,7 @@ async function playSnippetInternal(uri, seconds, id, isCurrent) {
   }
 
   await player.resume();
+  state.paused === false
 
   state = await waitForState(
     player,
@@ -252,27 +253,59 @@ async function playSnippetInternal(uri, seconds, id, isCurrent) {
 }
 
 export async function playSnippet(uri, seconds, isCurrent = () => true) {
-  const id = ++operationId;
+  const player = getCurrentPlayer();
 
-  return enqueue(async () => {
-    if (!isCurrent()) return;
+  const current = await player.getCurrentState().catch(() => null);
+  const loaded = current?.track_window?.current_track?.uri === uri;
 
-    try {
-      await playSnippetInternal(uri, seconds, id, isCurrent);
-    } finally {
-      if (id === operationId) {
-        const player = getCurrentPlayer();
+  if (!loaded) {
+    await loadTrack(uri);
+  }
 
-        if (player) {
-          const state = await getState(player);
+  if (!isCurrent()) return;
 
-          if (state?.paused !== true) {
-            await pauseConfirmed(player);
-          }
-        }
-      }
+  await player.pause().catch(() => {});
+
+  if (!isCurrent()) return;
+
+  await sleep(100);
+
+  await player.seek(0).catch(() => {});
+
+  if (!isCurrent()) return;
+
+  await sleep(100);
+
+  await player.resume();
+
+  if (!isCurrent()) {
+    await player.pause().catch(() => {});
+    return;
+  }
+
+  const started = performance.now();
+  const targetMs = seconds * 1000;
+
+  while (isCurrent()) {
+    const state = await player.getCurrentState().catch(() => null);
+
+    if (state?.track_window?.current_track?.uri !== uri) {
+      break;
     }
-  });
+
+    if (
+      state.position >= targetMs ||
+      performance.now() - started >= targetMs + 700
+    ) {
+      break;
+    }
+
+    await sleep(25);
+  }
+
+  if (isCurrent()) {
+    await player.pause().catch(() => {});
+  }
 }
 
 export async function replaySnippet(uri, seconds, isCurrent = () => true) {

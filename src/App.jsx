@@ -32,7 +32,9 @@ function Home() {
     {spotify.profile && <>
       <h2>Welcome, {spotify.profile.display_name}!</h2>
       <p>Spotify Connected 🎵</p>
-      {sdk.error && <p className="error">Player error: {sdk.error}</p>}
+      {sdk.error && sdk.error !== 'The operation is not allowed.' && (
+        <p className="error">Player error: {sdk.error}</p>
+      )}
       {sdk.ready && <p>🎧 SpotiGuess player is ready</p>}
 
       <h2>Your Playlists</h2>
