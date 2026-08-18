@@ -26,8 +26,22 @@ export async function getPlaylists() {
 }
 
 export async function getPlaylistTracks(playlistId) {
-  const data = await (await spotifyFetch(`https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`)).json();
-  return (data.items || []).map(item => item.item).filter(item => item?.type === 'track' && item.uri);
+  const tracks = [];
+  let url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
+
+  while (url) {
+    const data = await (await spotifyFetch(url)).json();
+
+    tracks.push(
+      ...(data.items || [])
+        .map(item => item.item)
+        .filter(item => item?.type === 'track' && item.uri)
+    );
+
+    url = data.next;
+  }
+
+  return tracks;
 }
 
 export async function startPlayback(deviceId, uri) {
