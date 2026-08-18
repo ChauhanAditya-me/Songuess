@@ -82,7 +82,6 @@ function Home() {
             {game.error && <p className="error">Game error: {game.error}</p>}
           </>}
 
-          <ul>{spotify.tracks.map(track => <li key={track.id}><strong>{track.name}</strong> — {track.artists?.map(a => a.name).join(', ')}</li>)}</ul>
         </section>}
       </>}
     </>}
