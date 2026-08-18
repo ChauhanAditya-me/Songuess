@@ -1,8 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SNIPPET_DURATIONS, LAST_STAGE } from '../game/stages';
 import { pickRandomTrack } from '../game/songSelector';
 import { isCorrectGuess } from '../utils/normalizeAnswer';
-import { playSnippet, stopPlayback } from '../spotify/playback';
+import {
+  playSnippet,
+  preloadTrack,
+  stopPlayback
+} from '../spotify/playback';
 
 export function useGame(tracks, playerReady) {
   const [gameTrack, setGameTrack] = useState(null);
@@ -14,6 +18,55 @@ export function useGame(tracks, playerReady) {
   const [score, setScore] = useState(0);
 
   const requestRef = useRef(0);
+  const preparedTrackRef = useRef(null);
+  const preloadPromiseRef = useRef(null);
+
+  // Keep one track prepared while the user is looking at the playlist.
+  // The first Start can therefore skip most of Spotify's track-loading delay.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!playerReady || !tracks?.length) return;
+
+    const track = pickRandomTrack(tracks);
+    if (!track) return;
+
+    preparedTrackRef.current = track;
+
+    preloadPromiseRef.current = preloadTrack(track.uri)
+      .catch(() => null)
+      .finally(() => {
+        if (!cancelled) {
+          preloadPromiseRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerReady, tracks]);
+
+  const prepareNext = useCallback((excludeId = null) => {
+    if (!playerReady || !tracks?.length) return null;
+
+    let track = pickRandomTrack(tracks);
+
+    for (let i = 0; i < 5 && track?.id === excludeId; i++) {
+      track = pickRandomTrack(tracks);
+    }
+
+    if (!track) return null;
+
+    preparedTrackRef.current = track;
+
+    preloadPromiseRef.current = preloadTrack(track.uri)
+      .catch(() => null)
+      .finally(() => {
+        preloadPromiseRef.current = null;
+      });
+
+    return track;
+  }, [tracks, playerReady]);
 
   const play = useCallback(async (track, targetStage) => {
     const requestId = ++requestRef.current;
@@ -46,11 +99,21 @@ export function useGame(tracks, playerReady) {
       return;
     }
 
-    const track = pickRandomTrack(tracks);
+    let track = preparedTrackRef.current;
+
+    if (!track) {
+      track = pickRandomTrack(tracks);
+    }
 
     if (!track) {
       setError('No playable tracks found.');
       return;
+    }
+
+    // If the preloader is still finishing, wait for it rather than starting
+    // another competing Spotify load operation.
+    if (preloadPromiseRef.current) {
+      await preloadPromiseRef.current;
     }
 
     setGameTrack(track);
@@ -59,7 +122,10 @@ export function useGame(tracks, playerReady) {
     setResult(null);
 
     await play(track, 0);
-  }, [tracks, playerReady, play]);
+
+    // Immediately prepare another candidate for the next round.
+    prepareNext(track.id);
+  }, [tracks, playerReady, play, prepareNext]);
 
   const replay = useCallback(async () => {
     if (!gameTrack) return;
@@ -98,10 +164,12 @@ export function useGame(tracks, playerReady) {
       setResult('correct');
       setStatus('correct');
       setGuess('');
+
+      prepareNext(gameTrack.id);
     } else {
       setResult('wrong');
     }
-  }, [gameTrack, guess, status]);
+  }, [gameTrack, guess, status, prepareNext]);
 
   const stop = useCallback(async () => {
     ++requestRef.current;
@@ -113,7 +181,11 @@ export function useGame(tracks, playerReady) {
     ++requestRef.current;
     await stopPlayback();
 
-    const track = pickRandomTrack(tracks);
+    let track = preparedTrackRef.current;
+
+    if (!track || track.id === gameTrack?.id) {
+      track = pickRandomTrack(tracks);
+    }
 
     if (!track) {
       setGameTrack(null);
@@ -122,13 +194,19 @@ export function useGame(tracks, playerReady) {
       return;
     }
 
+    if (preloadPromiseRef.current) {
+      await preloadPromiseRef.current;
+    }
+
     setGameTrack(track);
     setStage(0);
     setGuess('');
     setResult(null);
 
     await play(track, 0);
-  }, [tracks, play]);
+
+    prepareNext(track.id);
+  }, [tracks, gameTrack, play, prepareNext]);
 
   const reset = useCallback(async () => {
     ++requestRef.current;
@@ -141,6 +219,9 @@ export function useGame(tracks, playerReady) {
     setGuess('');
     setScore(0);
     setError(null);
+
+    preparedTrackRef.current = null;
+    preloadPromiseRef.current = null;
   }, []);
 
   return {
