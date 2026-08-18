@@ -4,6 +4,7 @@ import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
 import './App.css';
+import SongSearch from './components/SongSearch';
 
 function Callback({ code }) {
   const started = useRef(false);
@@ -51,13 +52,30 @@ function Home() {
           {game.gameTrack && <>
             <p>Snippet: <strong>{game.snippetSeconds}s</strong></p>
             {game.status === 'playing' && <p>🔊 Playing...</p>}
-            {['loading', 'playing', 'paused'].includes(game.status) && <form onSubmit={game.submitGuess}>
-              <input value={game.guess} onChange={e => game.setGuess(e.target.value)} placeholder="Song name" autoComplete="off" />
-              <button type="submit">Guess</button>
-              <button type="button" onClick={game.replay}>▶ Play Again</button>
-              <button type="button" onClick={game.stop}>■ Stop</button>
-              <button type="button" onClick={game.skip}>Skip</button>
-            </form>}
+            {['loading', 'playing', 'paused'].includes(game.status) && (
+              <form onSubmit={game.submitGuess}>
+                <SongSearch
+                  tracks={spotify.tracks}
+                  value={game.guess}
+                  onChange={game.setGuess}
+                  onSelect={track => game.setGuess(track.name)}
+                />
+
+                <button type="submit">Guess</button>
+
+                <button type="button" onClick={game.replay}>
+                  ▶ Play Again
+                </button>
+
+                <button type="button" onClick={game.stop}>
+                  ■ Stop
+                </button>
+
+                <button type="button" onClick={game.skip}>
+                  Skip
+                </button>
+              </form>
+            )}
             {game.result === 'wrong' && <p>❌ Wrong. Try again.</p>}
             {game.result === 'correct' && <><p>✅ Correct — <strong>{game.gameTrack.name}</strong></p><button onClick={game.nextRound}>Next</button></>}
             {game.result === 'gave_up' && <><p>❌ Answer: <strong>{game.gameTrack.name}</strong></p><button onClick={game.nextRound}>Next</button></>}
