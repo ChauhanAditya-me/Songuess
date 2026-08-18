@@ -1,441 +1,81 @@
-import React from "react";
-const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
-const REDIRECT_URI = "http://127.0.0.1:5173/callback";
-
-
-async function getAccessToken(code) {
-  const verifier = localStorage.getItem("code_verifier");
-
-  if (!verifier) {
-    throw new Error("Code verifier not found.");
-  }
-
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: "authorization_code",
-    code: code,
-    redirect_uri: REDIRECT_URI,
-    code_verifier: verifier,
-  });
-
-  const response = await fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error_description || "Token request failed.");
-  }
-
-  localStorage.setItem("spotify_access_token", data.access_token);
-
-  if (data.refresh_token) {
-    localStorage.setItem("spotify_refresh_token", data.refresh_token);
-  }
-
-  localStorage.setItem("spotify_token_expires", Date.now() + data.expires_in * 1000);
-
-  localStorage.removeItem("code_verifier");
-
-  return data.access_token;
-}
-
-function App() {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-  const error = params.get("error");
-
-  if (error) {
-    return (
-      <div>
-        <h1>SpotiGuess</h1>
-        <p>Spotify authorization was cancelled.</p>
-      </div>
-    );
-  }
-
-  if (code) {
-    return <Callback code={code} />;
-  }
-
-  return <Home />;
-}
+import React, { useEffect, useRef } from 'react';
+import { beginSpotifyLogin, exchangeCode, getAccessToken } from './spotify/auth';
+import { useSpotify } from './hooks/useSpotify';
+import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
+import { useGame } from './hooks/useGame';
+import './App.css';
 
 function Callback({ code }) {
-  const [status, setStatus] = React.useState("Connecting to Spotify...");
-  const [connected, setConnected] = React.useState(false);
-  const started = React.useRef(false);
-
-  React.useEffect(() => {
-    if (started.current) {
-      return;
-    }
-
+  const started = useRef(false);
+  const [status, setStatus] = React.useState('Connecting to Spotify...');
+  useEffect(() => {
+    if (started.current) return;
     started.current = true;
-
-    getAccessToken(code)
-      .then(() => {
-        setStatus("Spotify connected!");
-        setConnected(true);
-
-        window.location.href = "/";
-      })
-      .catch((error) => {
-        console.error(error);
-        setStatus("Failed to connect to Spotify.");
-      });
+    exchangeCode(code).then(() => { window.location.replace('/'); }).catch(e => setStatus(`Failed to connect: ${e.message}`));
   }, [code]);
-
-  return (
-    <div>
-      <h1>SpotiGuess</h1>
-
-      <p>{status}</p>
-
-      {connected && <p>🎵 You are ready to play!</p>}
-    </div>
-  );
+  return <main className="app"><h1>SpotiGuess</h1><p>{status}</p></main>;
 }
 
 function Home() {
-  const [player, setPlayer] = React.useState(null);
-  const [playerReady, setPlayerReady] = React.useState(false);
-  const [playerError, setPlayerError] = React.useState(null);
-  const [profile, setProfile] = React.useState(null);
-  const [playlists, setPlaylists] = React.useState([]);
-  const [tracks, setTracks] = React.useState([]);
-  const [selectedPlaylist, setSelectedPlaylist] = React.useState(null);
-  const [error, setError] = React.useState(null);
-  const [loadingTracks, setLoadingTracks] = React.useState(false);
+  const spotify = useSpotify();
+  const sdk = useSpotifyPlayer();
+  const game = useGame(spotify.tracks, sdk.ready);
 
-  React.useEffect(() => {
-    async function loadUserData() {
-      const token = localStorage.getItem("spotify_access_token");
+  return <main className="app">
+    <h1>SpotiGuess</h1>
+    <p>Guess the song before the time runs out.</p>
 
-      if (!token) {
-        console.log("No Spotify token found.");
-        return;
-      }
+    {spotify.error && <p className="error">{spotify.error}</p>}
+    {!spotify.profile && getAccessToken() == null && <button onClick={beginSpotifyLogin}>Connect Spotify</button>}
 
-      try {
-        const profileResponse = await fetch(
-          "https://api.spotify.com/v1/me",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+    {spotify.profile && <>
+      <h2>Welcome, {spotify.profile.display_name}!</h2>
+      <p>Spotify Connected 🎵</p>
+      {sdk.error && <p className="error">Player error: {sdk.error}</p>}
+      {sdk.ready && <p>🎧 SpotiGuess player is ready</p>}
 
-        if (!profileResponse.ok) {
-          throw new Error(
-            `Profile request failed: ${profileResponse.status}`
-          );
-        }
+      <h2>Your Playlists</h2>
+      {!spotify.selectedPlaylist && <ul>
+        {spotify.playlists.map(p => <li key={p.id}><button onClick={() => spotify.loadPlaylist(p)}>{p.name}</button> — {p.items?.total ?? 0} songs</li>)}
+      </ul>}
 
-        const profileData = await profileResponse.json();
-        console.log("Spotify profile:", profileData);
-        setProfile(profileData);
+      {spotify.selectedPlaylist && <>
+        <button onClick={spotify.resetPlaylist}>← Back to Playlists</button>
+        <h2>{spotify.selectedPlaylist.name}</h2>
+        {spotify.loadingTracks && <p>Loading songs...</p>}
+        {!spotify.loadingTracks && <p>{spotify.tracks.length} songs loaded</p>}
 
-        const playlistResponse = await fetch(
-          "https://api.spotify.com/v1/me/playlists?limit=50",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+        {spotify.tracks.length > 0 && <section className="game">
+          <h2>SpotiGuess</h2><p>Score: <strong>{game.score}</strong></p>
+          {!game.gameTrack && <button onClick={game.start} disabled={!sdk.ready}>▶ Start Round</button>}
+          {game.gameTrack && <>
+            <p>Snippet: <strong>{game.snippetSeconds}s</strong></p>
+            {game.status === 'playing' && <p>🔊 Playing...</p>}
+            {['loading', 'playing', 'paused'].includes(game.status) && <form onSubmit={game.submitGuess}>
+              <input value={game.guess} onChange={e => game.setGuess(e.target.value)} placeholder="Song name" autoComplete="off" />
+              <button type="submit">Guess</button>
+              <button type="button" onClick={game.replay}>▶ Play Again</button>
+              <button type="button" onClick={game.stop}>■ Stop</button>
+              <button type="button" onClick={game.skip}>Skip</button>
+            </form>}
+            {game.result === 'wrong' && <p>❌ Wrong. Try again.</p>}
+            {game.result === 'correct' && <><p>✅ Correct — <strong>{game.gameTrack.name}</strong></p><button onClick={game.nextRound}>Next</button></>}
+            {game.result === 'gave_up' && <><p>❌ Answer: <strong>{game.gameTrack.name}</strong></p><button onClick={game.nextRound}>Next</button></>}
+            {game.error && <p className="error">Game error: {game.error}</p>}
+          </>}
 
-        if (!playlistResponse.ok) {
-          throw new Error(
-            `Playlist request failed: ${playlistResponse.status}`
-          );
-        }
-
-        const playlistData = await playlistResponse.json();
-        console.log("Spotify playlists:", playlistData);
-        setPlaylists(playlistData.items);
-      } catch (error) {
-        console.error("Spotify data error:", error);
-        setError(error.message);
-      }
-    }
-
-    loadUserData();
-  }, []);
-
-  React.useEffect(() => {
-    const token = localStorage.getItem("spotify_access_token");
-
-    if (!token) {
-      return;
-    }
-
-    window.onSpotifyWebPlaybackSDKReady = () => {
-      const spotifyPlayer = new window.Spotify.Player({
-        name: "SpotiGuess Player",
-
-        getOAuthToken: (callback) => {
-          const currentToken =
-            localStorage.getItem("spotify_access_token");
-
-          callback(currentToken);
-        },
-
-        volume: 0.5,
-      });
-
-      spotifyPlayer.addListener("ready", ({ device_id }) => {
-        console.log("SpotiGuess player ready:", device_id);
-        setPlayerReady(true);
-      });
-
-      spotifyPlayer.addListener("not_ready", ({ device_id }) => {
-        console.log("SpotiGuess player not ready:", device_id);
-        setPlayerReady(false);
-      });
-
-      spotifyPlayer.addListener(
-        "initialization_error",
-        ({ message }) => {
-          console.error("Initialization error:", message);
-          setPlayerError(message);
-        }
-      );
-
-      spotifyPlayer.addListener(
-        "authentication_error",
-        ({ message }) => {
-          console.error("Authentication error:", message);
-          setPlayerError(message);
-        }
-      );
-
-      spotifyPlayer.addListener(
-        "account_error",
-        ({ message }) => {
-          console.error("Account error:", message);
-          setPlayerError(message);
-        }
-      );
-
-      spotifyPlayer.addListener(
-        "playback_error",
-        ({ message }) => {
-          console.error("Playback error:", message);
-          setPlayerError(message);
-        }
-      );
-
-      spotifyPlayer.connect();
-
-      setPlayer(spotifyPlayer);
-    };
-
-    if (!document.getElementById("spotify-player-script")) {
-      const script = document.createElement("script");
-
-      script.id = "spotify-player-script";
-      script.src = "https://sdk.scdn.co/spotify-player.js";
-      script.async = true;
-
-      document.body.appendChild(script);
-    }
-
-    return () => {
-      window.onSpotifyWebPlaybackSDKReady = undefined;
-    };
-  }, []);
-
-  async function loadPlaylist(playlist) {
-    const token = localStorage.getItem("spotify_access_token");
-
-    setSelectedPlaylist(playlist);
-    setTracks([]);
-    setLoadingTracks(true);
-    setError(null);
-
-    try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlist.id}/items?limit=50`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to get playlist tracks.");
-      }
-
-      const data = await response.json();
-
-      const songs = data.items
-        .map((item) => item.item)
-        .filter((item) => item && item.type === "track");
-
-      setTracks(songs);
-    } catch (error) {
-      console.error(error);
-      setError(error.message);
-    } finally {
-      setLoadingTracks(false);
-    }
-  }
-
-  async function connectSpotify() {
-    const verifier = generateCodeVerifier();
-    const challenge = await generateCodeChallenge(verifier);
-
-    localStorage.setItem("code_verifier", verifier);
-
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      response_type: "code",
-      redirect_uri: REDIRECT_URI,
-      scope: "user-read-private user-read-email playlist-read-private streaming",
-      code_challenge_method: "S256",
-      code_challenge: challenge,
-    });
-
-    window.location.href =
-      `https://accounts.spotify.com/authorize?${params.toString()}`;
-  }
-
-  return (
-    <div>
-      <h1>SpotiGuess</h1>
-
-      <p>Guess the song before the time runs out.</p>
-
-      {error && <p>{error}</p>}
-
-      {!profile && !error && (
-        <button onClick={connectSpotify}>
-          Connect Spotify
-        </button>
-      )}
-
-      {profile && (
-        <div>
-          <h2>Welcome, {profile.display_name}!</h2>
-
-          <p>Spotify Connected 🎵</p>
-
-          {playerError && (
-            <p>Player error: {playerError}</p>
-          )}
-
-          {playerReady && (
-            <p>🎧 SpotiGuess player is ready</p>
-          )}
-
-          <h2>Your Playlists</h2>
-
-          {playerReady && selectedPlaylist && tracks.length > 0 && (
-            <button
-              onClick={() => {
-                player.resume();
-              }}
-            >
-              ▶ Test Player
-            </button>
-          )}
-
-          {!selectedPlaylist && (
-            <>
-              {playlists.length === 0 ? (
-                <p>No playlists found.</p>
-              ) : (
-                <ul>
-                  {playlists.map((playlist) => (
-                    <li key={playlist.id}>
-                      <button onClick={() => loadPlaylist(playlist)}>
-                        {playlist.name}
-                      </button>
-
-                      {" "}
-                      — {playlist.items?.total ?? 0} songs
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-
-          {selectedPlaylist && (
-            <div>
-              <button
-                onClick={() => {
-                  setSelectedPlaylist(null);
-                  setTracks([]);
-                }}
-              >
-                ← Back to Playlists
-              </button>
-
-              <h2>{selectedPlaylist.name}</h2>
-
-              {loadingTracks && <p>Loading songs...</p>}
-
-              {!loadingTracks && tracks.length === 0 && (
-                <p>No playable tracks found.</p>
-              )}
-
-              {!loadingTracks && tracks.length > 0 && (
-                <div>
-                  <p>{tracks.length} songs loaded</p>
-
-                  <ul>
-                    {tracks.map((track) => (
-                      <li key={track.id}>
-                        <strong>{track.name}</strong>
-                        {" — "}
-                        {track.artists
-                          .map((artist) => artist.name)
-                          .join(", ")}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+          <ul>{spotify.tracks.map(track => <li key={track.id}><strong>{track.name}</strong> — {track.artists?.map(a => a.name).join(', ')}</li>)}</ul>
+        </section>}
+      </>}
+    </>}
+  </main>;
 }
 
-function generateCodeVerifier(length = 128) {
-  const characters =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-  let verifier = "";
-
-  for (let i = 0; i < length; i++) {
-    verifier += characters.charAt(
-      Math.floor(Math.random() * characters.length)
-    );
-  }
-
-  return verifier;
+export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+  if (error) return <main className="app"><h1>SpotiGuess</h1><p>Spotify authorization was cancelled.</p></main>;
+  if (code) return <Callback code={code} />;
+  return <Home />;
 }
-
-async function generateCodeChallenge(verifier) {
-  const data = new TextEncoder().encode(verifier);
-  const digest = await window.crypto.subtle.digest("SHA-256", data);
-
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-export default App;
