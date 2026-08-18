@@ -1,5 +1,6 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
-export const REDIRECT_URI = 'http://127.0.0.1:5173/callback';
+const REDIRECT_URI =
+  window.location.origin + import.meta.env.BASE_URL + 'callback';
 
 export function getAccessToken() {
   return localStorage.getItem('spotify_access_token');
