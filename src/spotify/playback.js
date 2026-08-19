@@ -34,11 +34,36 @@ export async function isAudioServerOnline() {
   try {
     const res = await fetch(`${AUDIO_SERVER_URL}/health`, { signal: AbortSignal.timeout(1000) });
     const data = await res.json();
-    serverAvailable = Boolean(data?.status === 'ok');
+    serverAvailable = Boolean(data?.status === 'ok' && data?.authenticated);
   } catch {
     serverAvailable = false;
   }
   return serverAvailable;
+}
+
+export async function getAudioServerAuthStatus() {
+  try {
+    const res = await fetch(`${AUDIO_SERVER_URL}/auth/status`, { signal: AbortSignal.timeout(1000) });
+    if (!res.ok) return { online: false, authenticated: false };
+    const data = await res.json();
+    return { online: true, authenticated: Boolean(data.authenticated), hasCredentials: Boolean(data.has_credentials) };
+  } catch {
+    return { online: false, authenticated: false, hasCredentials: false };
+  }
+}
+
+export async function startAudioServerLogin() {
+  try {
+    const res = await fetch(`${AUDIO_SERVER_URL}/auth/login-url`);
+    const data = await res.json();
+    if (data.auth_url) {
+      window.open(data.auth_url, 'spotify_login', 'width=600,height=750');
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // Reset cached server availability on demand

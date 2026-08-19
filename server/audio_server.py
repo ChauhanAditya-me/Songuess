@@ -2,13 +2,14 @@ import os
 import io
 import subprocess
 import logging
+import threading
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from dotenv import load_dotenv
 
-from librespot.core import Session, TrackId
+from librespot.core import Session, TrackId, OAuth, MercuryRequests
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -36,8 +37,28 @@ session: Optional[Session] = None
 # Cache raw Vorbis stream bytes per track_id
 track_cache: dict[str, bytes] = {}
 
-
 CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
+
+current_oauth_handler: Optional[OAuth] = None
+oauth_lock = threading.Lock()
+
+
+def run_oauth_worker(oauth_handler: OAuth):
+    global session, current_oauth_handler
+    try:
+        oauth_handler.run_callback_server()
+        oauth_handler.request_token()
+        creds = oauth_handler.get_credentials()
+
+        builder = Session.Builder()
+        builder.conf.stored_credentials_file = CREDENTIALS_FILE
+        builder.login_credentials = creds
+        session = builder.create()
+        logger.info("Successfully authenticated Spotify session via Web 1-click OAuth!")
+    except Exception as e:
+        logger.error(f"Web OAuth background worker failed: {e}")
+    finally:
+        current_oauth_handler = None
 
 
 def get_session() -> Session:
@@ -213,7 +234,7 @@ def get_web_token():
 
 @app.get("/health")
 def health_check():
-    has_creds = bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
+    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
     authenticated = session is not None and session.is_valid()
     return {
         "status": "ok",
@@ -221,6 +242,54 @@ def health_check():
         "authenticated": authenticated,
         "cached_tracks": len(track_cache),
     }
+
+
+@app.get("/auth/status")
+def auth_status():
+    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
+    authenticated = session is not None and session.is_valid()
+    return {
+        "authenticated": authenticated,
+        "has_credentials": has_creds,
+    }
+
+
+@app.get("/auth/login-url")
+def get_login_url():
+    global session, current_oauth_handler
+
+    if session is not None and session.is_valid():
+        return {"authenticated": True, "auth_url": None}
+
+    with oauth_lock:
+        if current_oauth_handler is not None:
+            try:
+                auth_url = current_oauth_handler.get_auth_url()
+                return {"authenticated": False, "auth_url": auth_url}
+            except Exception:
+                pass
+
+        oauth = OAuth(MercuryRequests.keymaster_client_id, "http://127.0.0.1:5588/login", None)
+        success_html = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Spotify Connected</title></head>
+<body style="background:#121212;color:#ffffff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;">
+  <div style="background:#181818;padding:40px;border-radius:12px;border:1px solid #282828;max-width:400px;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
+    <h2 style="color:#1db954;margin-top:0;font-size:1.6rem;">✅ Spotify Connected!</h2>
+    <p style="color:#b3b3b3;line-height:1.5;">Your SpotiGuess audio server is now authenticated.</p>
+    <p style="color:#888;font-size:0.85rem;margin-top:20px;">You can close this tab and return to the game.</p>
+  </div>
+</body>
+</html>"""
+        oauth.set_success_page_content(success_html)
+        auth_url = oauth.get_auth_url()
+        current_oauth_handler = oauth
+
+        # Run callback server in daemon thread
+        t = threading.Thread(target=run_oauth_worker, args=(oauth,), daemon=True)
+        t.start()
+
+        return {"authenticated": False, "auth_url": auth_url}
 
 
 @app.get("/audio/snippet")

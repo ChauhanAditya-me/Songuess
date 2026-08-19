@@ -3,7 +3,7 @@ import { beginSpotifyLogin, exchangeCode, getAccessToken } from './spotify/auth'
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
-import { isAudioServerOnline } from './spotify/playback';
+import { isAudioServerOnline, getAudioServerAuthStatus, startAudioServerLogin } from './spotify/playback';
 import './App.css';
 import SongSearch from './components/SongSearch';
 
@@ -22,11 +22,24 @@ function Home() {
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
   const game = useGame(spotify.tracks, sdk.ready);
-  const [serverActive, setServerActive] = useState(false);
+  const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
 
   useEffect(() => {
-    isAudioServerOnline().then(setServerActive);
+    getAudioServerAuthStatus().then(setServerStatus);
   }, []);
+
+  const handleAudioServerAuth = async () => {
+    await startAudioServerLogin();
+    const interval = setInterval(async () => {
+      const s = await getAudioServerAuthStatus();
+      setServerStatus(s);
+      if (s.authenticated) {
+        clearInterval(interval);
+        window.location.reload();
+      }
+    }, 1500);
+    setTimeout(() => clearInterval(interval), 60000);
+  };
 
   return <main className="app">
     <h1>SpotiGuess</h1>
@@ -38,8 +51,15 @@ function Home() {
     {spotify.profile && <>
       <h2>Welcome, {spotify.profile.display_name}!</h2>
       <p>Spotify Connected 🎵</p>
-      {serverActive ? (
+      {serverStatus.online && serverStatus.authenticated ? (
         <p style={{ color: '#1db954', fontWeight: 'bold' }}>⚡ Ultra-Fast Audio Server Active</p>
+      ) : serverStatus.online && !serverStatus.authenticated ? (
+        <div style={{ margin: '10px 0' }}>
+          <p style={{ color: '#e5a50a' }}>⚠️ Audio server is running but needs 1-click Spotify authentication</p>
+          <button className="btn-reconnect" onClick={handleAudioServerAuth}>
+            🔑 1-Click Authenticate Audio Server
+          </button>
+        </div>
       ) : (
         <>
           {sdk.error && sdk.error !== 'The operation is not allowed.' && (
