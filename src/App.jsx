@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { beginSpotifyLogin, exchangeCode, getAccessToken } from './spotify/auth';
+import { beginSpotifyLogin, exchangeCode, getAccessToken, logout } from './spotify/auth';
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
@@ -65,8 +65,16 @@ function Home() {
     {!spotify.profile && getAccessToken() == null && <button onClick={beginSpotifyLogin}>Connect Spotify</button>}
 
     {spotify.profile && <>
-      <h2>Welcome, {spotify.profile.display_name}!</h2>
-      <p>Spotify Connected 🎵</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+        <h2 style={{ margin: 0 }}>Welcome, {spotify.profile.display_name}!</h2>
+        <button
+          onClick={logout}
+          style={{ background: '#282828', color: '#eee', border: '1px solid #444', padding: '6px 14px', borderRadius: '16px', cursor: 'pointer', fontSize: '0.85rem' }}
+        >
+          🚪 Logout
+        </button>
+      </div>
+      <p style={{ margin: '5px 0' }}>Spotify Connected 🎵</p>
       {serverStatus.online && serverStatus.authenticated ? (
         <p style={{ color: '#1db954', fontWeight: 'bold' }}>⚡ Ultra-Fast Audio Server Active</p>
       ) : serverStatus.online && !serverStatus.authenticated ? (

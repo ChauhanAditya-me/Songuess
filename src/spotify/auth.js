@@ -69,3 +69,9 @@ export async function exchangeCode(code) {
   localStorage.removeItem('code_verifier');
   return data.access_token;
 }
+
+export function logout() {
+  localStorage.clear();
+  sessionStorage.clear();
+  window.location.replace('/');
+}

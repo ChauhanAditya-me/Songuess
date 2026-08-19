@@ -238,6 +238,7 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   const serverOnline = await isAudioServerOnline();
 
   if (serverOnline) {
+    console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${AUDIO_SERVER_URL}`);
     // Stop any existing HTML5 audio
     if (currentHtmlAudio) {
       try {
@@ -262,14 +263,17 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
         resolve();
       };
 
-      audio.onerror = () => {
+      audio.onerror = (err) => {
         if (currentHtmlAudio === audio) currentHtmlAudio = null;
+        console.error('[Songuess] Audio playback error from server:', err);
         reject(new Error('Audio playback failed from server.'));
       };
 
       audio.play().catch(reject);
     });
   }
+
+  console.warn('[Songuess] Audio server is offline. Falling back to Spotify Web Playback SDK...');
 
   // --- Fallback to Spotify Web Playback SDK ---
   const player = getCurrentPlayer();
