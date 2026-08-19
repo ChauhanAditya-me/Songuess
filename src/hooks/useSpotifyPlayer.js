@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSpotifyPlayer, getCurrentDeviceId, subscribe, reconnectPlayer } from '../spotify/player';
+import { isAudioServerOnline } from '../spotify/playback';
 
 export function useSpotifyPlayer() {
   const [player, setPlayer] = useState(null);
@@ -11,54 +12,63 @@ export function useSpotifyPlayer() {
 
   useEffect(() => {
     let alive = true;
+    let unsubs = [];
 
-    const unsubReady = subscribe('ready', id => {
+    isAudioServerOnline().then(serverOnline => {
       if (!alive) return;
-      setDeviceId(id);
-      setReady(true);
-      setError(null);
-    });
+      if (serverOnline) {
+        // Audio server is active, no need to connect Spotify Web Playback SDK!
+        setReady(true);
+        return;
+      }
 
-    const unsubNotReady = subscribe('not_ready', () => {
-      if (!alive) return;
-      setReady(false);
-    });
-
-    const unsubError = subscribe('error', message => {
-      if (alive) setError(message);
-    });
-
-    const unsubPlayback = subscribe('playback_error', message => {
-      if (alive) setError(message);
-    });
-
-    const unsubState = subscribe('state', s => {
-      if (alive) setState(s);
-    });
-
-    getSpotifyPlayer()
-      .then(({ player: p, deviceId: id }) => {
+      // Fallback only: connect Web Playback SDK
+      const unsubReady = subscribe('ready', id => {
         if (!alive) return;
-        setPlayer(p);
-        if (id) {
-          setDeviceId(id);
-          setReady(true);
-        }
-      })
-      .catch(e => {
-        if (alive) {
-          setReady(false);
-          setError(e.message);
-        }
+        setDeviceId(id);
+        setReady(true);
+        setError(null);
       });
+
+      const unsubNotReady = subscribe('not_ready', () => {
+        if (!alive) return;
+        setReady(false);
+      });
+
+      const unsubError = subscribe('error', message => {
+        if (alive) setError(message);
+      });
+
+      const unsubPlayback = subscribe('playback_error', message => {
+        if (alive) setError(message);
+      });
+
+      const unsubState = subscribe('state', s => {
+        if (alive) setState(s);
+      });
+
+      unsubs = [unsubReady, unsubNotReady, unsubError, unsubPlayback, unsubState];
+
+      getSpotifyPlayer()
+        .then(({ player: p, deviceId: id }) => {
+          if (!alive) return;
+          setPlayer(p);
+          if (id) {
+            setDeviceId(id);
+            setReady(true);
+          }
+        })
+        .catch(e => {
+          if (alive) {
+            setReady(false);
+            setError(e.message);
+          }
+        });
+    });
 
     return () => {
       alive = false;
-      unsubReady();
-      unsubNotReady();
-      unsubError();
-      unsubPlayback();
-      unsubState();
+      unsubs.forEach(u => u());
     };
   }, []);
 

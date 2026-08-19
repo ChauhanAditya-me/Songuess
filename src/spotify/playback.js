@@ -34,10 +34,10 @@ function enqueue(task) {
   return run;
 }
 
-export async function isAudioServerOnline() {
-  if (serverAvailable !== null) return serverAvailable;
+export async function isAudioServerOnline(forceCheck = false) {
+  if (!forceCheck && serverAvailable === true) return true;
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    const res = await fetch(`${AUDIO_SERVER_URL}/health`, { signal: AbortSignal.timeout(3500) });
     const data = await res.json();
     serverAvailable = Boolean(data?.status === 'ok' && data?.authenticated);
   } catch {
@@ -48,7 +48,7 @@ export async function isAudioServerOnline() {
 
 export async function getAudioServerAuthStatus() {
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/auth/status`, { signal: AbortSignal.timeout(1000) });
+    const res = await fetch(`${AUDIO_SERVER_URL}/auth/status`, { signal: AbortSignal.timeout(3500) });
     if (!res.ok) return { online: false, authenticated: false };
     const data = await res.json();
     return { online: true, authenticated: Boolean(data.authenticated), hasCredentials: Boolean(data.has_credentials) };
