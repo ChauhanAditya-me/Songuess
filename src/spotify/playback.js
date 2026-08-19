@@ -84,6 +84,15 @@ export async function submitAudioServerCode(code) {
   }
 }
 
+export async function fetchPublicPlaylist(url) {
+  const res = await fetch(`${AUDIO_SERVER_URL}/api/public-playlist?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load public playlist.');
+  }
+  return res.json();
+}
+
 // Reset cached server availability on demand
 export function checkServerStatus() {
   serverAvailable = null;

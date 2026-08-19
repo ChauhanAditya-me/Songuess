@@ -27,10 +27,17 @@ export function useSpotify() {
     finally { setLoadingTracks(false); }
   }
 
+  function loadCustomTracks(name, trackList) {
+    setSelectedPlaylist({ name, id: 'custom' });
+    setTracks(trackList);
+    setLoadingTracks(false);
+    setError(null);
+  }
+
   function resetPlaylist() {
     setSelectedPlaylist(null);
     setTracks([]);
   }
 
-  return { profile, playlists, tracks, selectedPlaylist, loadingTracks, error, loadPlaylist, resetPlaylist };
+  return { profile, playlists, tracks, selectedPlaylist, loadingTracks, error, loadPlaylist, loadCustomTracks, resetPlaylist };
 }

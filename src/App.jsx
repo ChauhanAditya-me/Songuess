@@ -3,7 +3,7 @@ import { beginSpotifyLogin, exchangeCode, getAccessToken, logout } from './spoti
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
-import { isAudioServerOnline, getAudioServerAuthStatus, startAudioServerLogin, submitAudioServerCode } from './spotify/playback';
+import { isAudioServerOnline, getAudioServerAuthStatus, startAudioServerLogin, submitAudioServerCode, fetchPublicPlaylist } from './spotify/playback';
 import './App.css';
 import SongSearch from './components/SongSearch';
 
@@ -23,6 +23,10 @@ function Home() {
   const serverReady = Boolean(serverStatus.online && serverStatus.authenticated);
   const [authCodeInput, setAuthCodeInput] = useState('');
   const [submittingCode, setSubmittingCode] = useState(false);
+  const [customUrlInput, setCustomUrlInput] = useState('');
+  const [loadingPublic, setLoadingPublic] = useState(false);
+  const [publicError, setPublicError] = useState(null);
+
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
   const game = useGame(spotify.tracks, sdk.ready || serverReady);
@@ -57,12 +61,40 @@ function Home() {
     }
   };
 
+  const handleLoadPublicPlaylist = async (urlOrId) => {
+    setPublicError(null);
+    setLoadingPublic(true);
+    try {
+      const data = await fetchPublicPlaylist(urlOrId);
+      if (data?.tracks?.length > 0) {
+        spotify.loadCustomTracks(data.name, data.tracks);
+      } else {
+        setPublicError('No tracks found in playlist.');
+      }
+    } catch (err) {
+      setPublicError(err.message || 'Failed to load playlist.');
+    } finally {
+      setLoadingPublic(false);
+    }
+  };
+
+  const handleCustomUrlSubmit = (e) => {
+    e.preventDefault();
+    if (!customUrlInput.trim()) return;
+    handleLoadPublicPlaylist(customUrlInput.trim());
+  };
+
   return <main className="app">
     <h1>Songuess</h1>
     <p>Guess the song before the time runs out.</p>
 
     {spotify.error && <p className="error">{spotify.error}</p>}
-    {!spotify.profile && getAccessToken() == null && <button onClick={beginSpotifyLogin}>Connect Spotify</button>}
+    {!spotify.profile && getAccessToken() == null && (
+      <div style={{ marginBottom: '15px' }}>
+        <button onClick={beginSpotifyLogin}>Connect Spotify Account</button>
+        <span style={{ margin: '0 10px', color: '#888' }}>or play as guest below 👇</span>
+      </div>
+    )}
 
     {spotify.profile && <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -119,10 +151,56 @@ function Home() {
         </>
       )}
 
-      <h2>Your Playlists</h2>
-      {!spotify.selectedPlaylist && <ul>
-        {spotify.playlists.map(p => <li key={p.id}><button onClick={() => spotify.loadPlaylist(p)}>{p.name}</button> — {p.items?.total ?? 0} songs</li>)}
-      </ul>}
+      {/* Guest Mode / Public Playlist Picker */}
+      {!spotify.selectedPlaylist && (
+        <div style={{ margin: '20px 0', padding: '16px', background: '#181818', borderRadius: '12px', border: '1px solid #282828', textAlign: 'left' }}>
+          <h3 style={{ marginTop: 0, color: '#fff', fontSize: '1.1rem' }}>🎮 Play Any Spotify Playlist</h3>
+          <p style={{ color: '#aaa', fontSize: '0.85rem', margin: '4px 0 12px' }}>
+            Choose a quick mix or paste any Spotify playlist link:
+          </p>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            {[
+              { name: "🔥 Today's Top Hits", id: "37i9dQZF1DXcBWIGoYBM5M" },
+              { name: "🎸 Rock Classics", id: "37i9dQZF1DWXRqgorJj26U" },
+              { name: "🕺 All Out 2000s", id: "37i9dQZF1DX4o1oenSJRJd" },
+              { name: "🎧 Chill Hits", id: "37i9dQZF1DX4WYpdgoIcn6" },
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => handleLoadPublicPlaylist(item.id)}
+                disabled={loadingPublic}
+                style={{ background: '#242424', border: '1px solid #444', color: '#fff', padding: '6px 12px', borderRadius: '16px', cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleCustomUrlSubmit} style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              placeholder="Paste Spotify playlist link or ID..."
+              value={customUrlInput}
+              onChange={e => setCustomUrlInput(e.target.value)}
+              style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #444', background: '#222', color: '#fff' }}
+            />
+            <button type="submit" disabled={loadingPublic}>
+              {loadingPublic ? 'Loading...' : '▶ Play'}
+            </button>
+          </form>
+          {publicError && <p style={{ color: '#e55353', marginTop: '10px', fontSize: '0.85rem' }}>{publicError}</p>}
+        </div>
+      )}
+
+      {spotify.profile && !spotify.selectedPlaylist && spotify.playlists.length > 0 && (
+        <>
+          <h2>Your Personal Playlists</h2>
+          <ul>
+            {spotify.playlists.map(p => <li key={p.id}><button onClick={() => spotify.loadPlaylist(p)}>{p.name}</button> — {p.items?.total ?? 0} songs</li>)}
+          </ul>
+        </>
+      )}
 
       {spotify.selectedPlaylist && <>
         <button onClick={spotify.resetPlaylist}>← Back to Playlists</button>

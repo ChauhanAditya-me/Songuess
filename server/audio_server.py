@@ -334,6 +334,83 @@ def submit_oauth_code(payload: CodeSubmitPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/public-playlist")
+def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL, URI, or ID")):
+    """Fetches public Spotify playlist tracks without requiring user OAuth login."""
+    import re
+    import json
+    import requests
+
+    clean_url = url.strip()
+    match = re.search(r"playlist[/:]+([a-zA-Z0-9]+)", clean_url)
+    if match:
+        playlist_id = match.group(1)
+    else:
+        playlist_id = clean_url.split("?")[0].split("/")[-1]
+
+    embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+    try:
+        resp = requests.get(
+            embed_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=404, detail="Could not find or load Spotify playlist")
+
+        m = re.search(r"__NEXT_DATA__.*?>(.*?)</script>", resp.text)
+        if not m:
+            raise HTTPException(status_code=500, detail="Could not parse playlist metadata")
+
+        data = json.loads(m.group(1))
+        entity = (
+            data.get("props", {})
+            .get("pageProps", {})
+            .get("state", {})
+            .get("data", {})
+            .get("entity", {})
+        )
+
+        name = entity.get("name") or "Spotify Playlist"
+        track_list = entity.get("trackList", [])
+
+        tracks = []
+        for t in track_list:
+            uri = t.get("uri")
+            title = t.get("title")
+            subtitle = t.get("subtitle", "")
+            if not uri or not title:
+                continue
+
+            track_id = uri.replace("spotify:track:", "")
+            tracks.append(
+                {
+                    "id": track_id,
+                    "name": title,
+                    "uri": uri,
+                    "artists": [{"name": subtitle}],
+                    "duration_ms": t.get("duration", 0),
+                }
+            )
+
+        if not tracks:
+            raise HTTPException(status_code=404, detail="No playable tracks found in playlist")
+
+        return {
+            "id": playlist_id,
+            "name": name,
+            "tracks": tracks,
+            "total": len(tracks),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error loading public playlist")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/audio/snippet")
 def get_snippet(
     uri: str = Query(..., description="Spotify track URI (e.g. spotify:track:...) or ID"),
