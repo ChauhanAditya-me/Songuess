@@ -5,7 +5,13 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 let playbackQueue = Promise.resolve();
 let operationId = 0;
-let savedVolume = null;
+let savedVolume = 0.5;
+
+export function resetPlaybackQueue() {
+  playbackQueue = Promise.resolve();
+  operationId++;
+  savedVolume = 0.5;
+}
 
 function enqueue(task) {
   const run = playbackQueue.then(task, task);
@@ -76,7 +82,12 @@ async function setVolume(player, volume) {
 }
 
 async function loadTrackInternal(player, deviceId, uri) {
-  savedVolume = await player.getVolume().catch(() => 0.5);
+  const currentVol = await player.getVolume().catch(() => 0.5);
+  if (currentVol && currentVol > 0.05) {
+    savedVolume = currentVol;
+  } else if (!savedVolume || savedVolume <= 0.05) {
+    savedVolume = 0.5;
+  }
 
   // Keep loading completely silent. If Spotify starts before the SDK reports
   // the new track, the user never hears the beginning of the full song.
@@ -113,7 +124,7 @@ async function loadTrackInternal(player, deviceId, uri) {
   await seekToZero(player);
 
   // Leave the track loaded and paused. This is the important preload state.
-  await setVolume(player, savedVolume);
+  await setVolume(player, savedVolume || 0.5);
 }
 
 export async function ensurePlayer() {
@@ -254,6 +265,7 @@ async function playSnippetInternal(uri, seconds, id, isCurrent) {
 
 export async function playSnippet(uri, seconds, isCurrent = () => true) {
   const player = getCurrentPlayer();
+  if (!player) throw new Error('Spotify player is not initialized.');
 
   const current = await player.getCurrentState().catch(() => null);
   const loaded = current?.track_window?.current_track?.uri === uri;
@@ -275,6 +287,9 @@ export async function playSnippet(uri, seconds, isCurrent = () => true) {
   if (!isCurrent()) return;
 
   await sleep(100);
+
+  const vol = (savedVolume && savedVolume > 0.05) ? savedVolume : 0.5;
+  await player.setVolume(vol).catch(() => {});
 
   await player.resume();
 
@@ -323,8 +338,7 @@ export async function stopPlayback() {
     await pauseConfirmed(player);
     await seekToZero(player);
 
-    if (savedVolume !== null) {
-      await setVolume(player, savedVolume);
-    }
+    const vol = (savedVolume && savedVolume > 0.05) ? savedVolume : 0.5;
+    await setVolume(player, vol);
   });
 }

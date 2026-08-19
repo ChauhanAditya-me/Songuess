@@ -105,3 +105,23 @@ ul {
 li {
   margin-bottom: 10px;
 }
+
+.btn-reconnect {
+  background: transparent;
+  border: 1px solid #555;
+  color: #b3b3b3;
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  border-radius: 6px;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.btn-reconnect:hover {
+  border-color: #1db954;
+  color: #1db954;
+}
+
+.btn-reconnect:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

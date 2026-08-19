@@ -1,3 +1,5 @@
+import { resetPlaybackQueue } from './playback';
+
 const PLAYER_NAME = 'SpotiGuess Player';
 
 let player = null;
@@ -184,4 +186,53 @@ export function getCurrentDeviceId() {
 
 export function isPlayerReady() {
   return Boolean(player && sdkReady && getCurrentDeviceId());
+}
+
+/**
+ * Tears down the current Spotify Web Playback SDK player and creates a
+ * fresh one.  This is intended to recover from the intermittent state
+ * where the SDK reports the correct track and "playing" but the browser
+ * produces no audible audio.
+ *
+ * The caller should stop any in-flight game playback before calling this.
+ */
+export async function reconnectPlayer() {
+  // 1. Disconnect the old player (if any).
+  if (player) {
+    try {
+      player.removeListener('ready');
+      player.removeListener('not_ready');
+      player.removeListener('initialization_error');
+      player.removeListener('authentication_error');
+      player.removeListener('account_error');
+      player.removeListener('playback_error');
+      player.removeListener('player_state_changed');
+    } catch {
+      // Best-effort listener cleanup.
+    }
+
+    try {
+      player.disconnect();
+    } catch {
+      // Best-effort disconnect.
+    }
+  }
+
+  // 2. Clear all module-level state so getSpotifyPlayer() starts fresh.
+  player = null;
+  deviceId = null;
+  sdkReady = false;
+  promise = null;
+  readyPromise = null;
+  resolveReady = null;
+  rejectReady = null;
+  window.spotiguessDeviceId = undefined;
+
+  // 3. Clear any stuck playback queue.
+  resetPlaybackQueue();
+
+  // 4. Create a brand-new player via the existing getSpotifyPlayer() path.
+  //    The SDK script is already loaded so this skips straight to
+  //    `new Spotify.Player(...)`.
+  return getSpotifyPlayer();
 }

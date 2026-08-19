@@ -72,7 +72,7 @@ export function useGame(tracks, playerReady) {
     const requestId = ++requestRef.current;
 
     setError(null);
-    setStatus('loading');
+    setStatus('playing');
     setResult(null);
 
     try {
@@ -110,10 +110,12 @@ export function useGame(tracks, playerReady) {
       return;
     }
 
-    // If the preloader is still finishing, wait for it rather than starting
-    // another competing Spotify load operation.
+    // If the preloader is still finishing, wait for it briefly rather than blocking indefinitely
     if (preloadPromiseRef.current) {
-      await preloadPromiseRef.current;
+      await Promise.race([
+        preloadPromiseRef.current,
+        new Promise(r => setTimeout(r, 1500))
+      ]);
     }
 
     setGameTrack(track);
@@ -137,9 +139,9 @@ export function useGame(tracks, playerReady) {
 
     if (stage >= LAST_STAGE) {
       ++requestRef.current;
-      await stopPlayback();
       setResult('gave_up');
       setStatus('gave_up');
+      stopPlayback().catch(() => {});
       return;
     }
 
@@ -158,7 +160,7 @@ export function useGame(tracks, playerReady) {
 
     if (isCorrectGuess(guess, gameTrack)) {
       ++requestRef.current;
-      await stopPlayback();
+      stopPlayback().catch(() => {});
 
       setScore(score => score + 1000);
       setResult('correct');
@@ -173,13 +175,13 @@ export function useGame(tracks, playerReady) {
 
   const stop = useCallback(async () => {
     ++requestRef.current;
-    await stopPlayback();
+    stopPlayback().catch(() => {});
     setStatus('paused');
   }, []);
 
   const nextRound = useCallback(async () => {
-    ++requestRef.current;
-    await stopPlayback();
+    const requestId = ++requestRef.current;
+    stopPlayback().catch(() => {});
 
     let track = preparedTrackRef.current;
 
@@ -195,8 +197,13 @@ export function useGame(tracks, playerReady) {
     }
 
     if (preloadPromiseRef.current) {
-      await preloadPromiseRef.current;
+      await Promise.race([
+        preloadPromiseRef.current,
+        new Promise(r => setTimeout(r, 1500))
+      ]);
     }
+
+    if (requestId !== requestRef.current) return;
 
     setGameTrack(track);
     setStage(0);

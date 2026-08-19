@@ -35,7 +35,20 @@ function Home() {
       {sdk.error && sdk.error !== 'The operation is not allowed.' && (
         <p className="error">Player error: {sdk.error}</p>
       )}
-      {sdk.ready && <p>🎧 SpotiGuess player is ready</p>}
+      {sdk.reconnecting && <p>🔄 Reconnecting player...</p>}
+      {sdk.ready && !sdk.reconnecting && <p>🎧 SpotiGuess player is ready</p>}
+      {(sdk.ready || sdk.error) && !sdk.reconnecting && (
+        <button
+          className="btn-reconnect"
+          disabled={sdk.reconnecting}
+          onClick={async () => {
+            await game.reset();
+            await sdk.reconnect();
+          }}
+        >
+          🔄 Reconnect Player
+        </button>
+      )}
 
       <h2>Your Playlists</h2>
       {!spotify.selectedPlaylist && <ul>
