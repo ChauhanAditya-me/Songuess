@@ -1,7 +1,12 @@
 import { startPlayback } from './api';
 import { getCurrentPlayer, getSpotifyPlayer } from './player';
 
-const AUDIO_SERVER_URL = 'http://127.0.0.1:3001';
+const AUDIO_SERVER_URL =
+  import.meta.env.VITE_AUDIO_SERVER_URL ||
+  (typeof window !== 'undefined' && window.location.protocol === 'https:' && window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost'
+    ? 'https://songuess.onrender.com'
+    : 'http://127.0.0.1:3001');
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 let currentHtmlAudio = null;

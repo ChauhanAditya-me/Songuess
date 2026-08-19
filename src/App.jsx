@@ -19,10 +19,11 @@ function Callback({ code }) {
 }
 
 function Home() {
+  const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
+  const serverReady = Boolean(serverStatus.online && serverStatus.authenticated);
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
-  const game = useGame(spotify.tracks, sdk.ready);
-  const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
+  const game = useGame(spotify.tracks, sdk.ready || serverReady);
 
   useEffect(() => {
     getAudioServerAuthStatus().then(setServerStatus);
@@ -95,7 +96,7 @@ function Home() {
 
         {spotify.tracks.length > 0 && <section className="game">
           <h2>Songuess</h2><p>Score: <strong>{game.score}</strong></p>
-          {!game.gameTrack && <button onClick={game.start} disabled={!sdk.ready}>▶ Start Round</button>}
+          {!game.gameTrack && <button onClick={game.start} disabled={!sdk.ready && !serverReady}>▶ Start Round</button>}
           {game.gameTrack && <>
             <p>Snippet: <strong>{game.snippetSeconds}s</strong></p>
             {game.status === 'loading' && <p style={{ color: '#e5a50a' }}>⏳ Loading snippet...</p>}
