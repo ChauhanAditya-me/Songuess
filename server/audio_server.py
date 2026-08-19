@@ -79,15 +79,19 @@ def get_session() -> Session:
         except Exception as e:
             logger.warning(f"Failed to write SPOTIFY_CREDENTIALS: {e}")
 
-    # 1. Try saved credentials.json if available
+    # 1. Try saved credentials.json if available (with 3 retries for cloud networking)
     if os.path.exists(CREDENTIALS_FILE):
-        try:
-            logger.info("Authenticating with saved credentials.json...")
-            session = builder.stored_file(CREDENTIALS_FILE).create()
-            logger.info("Spotify session created from credentials.json!")
-            return session
-        except Exception as e:
-            logger.warning(f"Failed to restore saved session: {e}")
+        import time
+        for attempt in range(1, 4):
+            try:
+                logger.info(f"Authenticating with saved credentials.json (attempt {attempt}/3)...")
+                session = builder.stored_file(CREDENTIALS_FILE).create()
+                logger.info("Spotify session created from credentials.json!")
+                return session
+            except Exception as e:
+                logger.warning(f"Attempt {attempt} failed to restore session: {e}")
+                if attempt < 3:
+                    time.sleep(1.5)
 
     # 2. Try username/password from .env
     if SPOTIFY_USERNAME and SPOTIFY_PASSWORD:
@@ -243,7 +247,13 @@ def get_web_token():
 
 @app.get("/health")
 def health_check():
-    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
+    global session
+    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD) or bool(os.getenv("SPOTIFY_CREDENTIALS"))
+    if (session is None or not session.is_valid()) and has_creds:
+        try:
+            get_session()
+        except Exception:
+            pass
     authenticated = session is not None and session.is_valid()
     return {
         "status": "ok",
@@ -255,7 +265,13 @@ def health_check():
 
 @app.get("/auth/status")
 def auth_status():
-    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
+    global session
+    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD) or bool(os.getenv("SPOTIFY_CREDENTIALS"))
+    if (session is None or not session.is_valid()) and has_creds:
+        try:
+            get_session()
+        except Exception:
+            pass
     authenticated = session is not None and session.is_valid()
     return {
         "authenticated": authenticated,
