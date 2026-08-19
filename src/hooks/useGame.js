@@ -5,7 +5,8 @@ import { isCorrectGuess } from '../utils/normalizeAnswer';
 import {
   playSnippet,
   preloadTrack,
-  stopPlayback
+  stopPlayback,
+  isAudioServerOnline,
 } from '../spotify/playback';
 
 export function useGame(tracks, playerReady) {
@@ -26,7 +27,7 @@ export function useGame(tracks, playerReady) {
   useEffect(() => {
     let cancelled = false;
 
-    if (!playerReady || !tracks?.length) return;
+    if (!tracks?.length) return;
 
     const track = pickRandomTrack(tracks);
     if (!track) return;
@@ -44,10 +45,10 @@ export function useGame(tracks, playerReady) {
     return () => {
       cancelled = true;
     };
-  }, [playerReady, tracks]);
+  }, [tracks]);
 
   const prepareNext = useCallback((excludeId = null) => {
-    if (!playerReady || !tracks?.length) return null;
+    if (!tracks?.length) return null;
 
     let track = pickRandomTrack(tracks);
 
@@ -66,7 +67,7 @@ export function useGame(tracks, playerReady) {
       });
 
     return track;
-  }, [tracks, playerReady]);
+  }, [tracks]);
 
   const play = useCallback(async (track, targetStage) => {
     const requestId = ++requestRef.current;
@@ -100,8 +101,11 @@ export function useGame(tracks, playerReady) {
 
   const start = useCallback(async () => {
     if (!playerReady) {
-      setError('Waiting for the Spotify player...');
-      return;
+      const serverOnline = await isAudioServerOnline();
+      if (!serverOnline) {
+        setError('Connecting to audio engine, please try again in a moment...');
+        return;
+      }
     }
 
     let track = preparedTrackRef.current;
