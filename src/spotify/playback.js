@@ -1,11 +1,31 @@
 import { startPlayback } from './api';
 import { getCurrentPlayer, getSpotifyPlayer } from './player';
 
-const AUDIO_SERVER_URL =
-  import.meta.env.VITE_AUDIO_SERVER_URL ||
-  (typeof window !== 'undefined' && window.location.protocol === 'https:' && window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost'
-    ? 'https://songuess.onrender.com'
-    : 'http://127.0.0.1:3001');
+let activeAudioServerUrl = 'https://songuess.onrender.com';
+
+export async function getActiveAudioServerUrl() {
+  if (import.meta.env.VITE_AUDIO_SERVER_URL) {
+    return import.meta.env.VITE_AUDIO_SERVER_URL;
+  }
+  if (
+    typeof window !== 'undefined' &&
+    window.location.protocol === 'https:' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1')
+  ) {
+    return 'https://songuess.onrender.com';
+  }
+  // On local dev machine: try local 3001 first; if not running, auto-route to Render!
+  try {
+    const res = await fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(800) });
+    if (res.ok) {
+      activeAudioServerUrl = 'http://127.0.0.1:3001';
+      return activeAudioServerUrl;
+    }
+  } catch {}
+  activeAudioServerUrl = 'https://songuess.onrender.com';
+  return activeAudioServerUrl;
+}
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -37,7 +57,8 @@ function enqueue(task) {
 export async function isAudioServerOnline(forceCheck = false) {
   if (!forceCheck && serverAvailable === true) return true;
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/health`, { signal: AbortSignal.timeout(3500) });
+    const url = await getActiveAudioServerUrl();
+    const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3500) });
     const data = await res.json();
     serverAvailable = Boolean(data?.status === 'ok' && data?.authenticated);
   } catch {
@@ -48,7 +69,8 @@ export async function isAudioServerOnline(forceCheck = false) {
 
 export async function getAudioServerAuthStatus() {
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/auth/status`, { signal: AbortSignal.timeout(3500) });
+    const url = await getActiveAudioServerUrl();
+    const res = await fetch(`${url}/auth/status`, { signal: AbortSignal.timeout(3500) });
     if (!res.ok) return { online: false, authenticated: false };
     const data = await res.json();
     return { online: true, authenticated: Boolean(data.authenticated), hasCredentials: Boolean(data.has_credentials) };
@@ -59,7 +81,8 @@ export async function getAudioServerAuthStatus() {
 
 export async function startAudioServerLogin() {
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/auth/login-url`);
+    const url = await getActiveAudioServerUrl();
+    const res = await fetch(`${url}/auth/login-url`);
     const data = await res.json();
     if (data.auth_url) {
       window.open(data.auth_url, 'spotify_login', 'width=600,height=750');
@@ -73,7 +96,8 @@ export async function startAudioServerLogin() {
 
 export async function submitAudioServerCode(code) {
   try {
-    const res = await fetch(`${AUDIO_SERVER_URL}/auth/submit-code`, {
+    const url = await getActiveAudioServerUrl();
+    const res = await fetch(`${url}/auth/submit-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
@@ -84,8 +108,9 @@ export async function submitAudioServerCode(code) {
   }
 }
 
-export async function fetchPublicPlaylist(url) {
-  const res = await fetch(`${AUDIO_SERVER_URL}/api/public-playlist?url=${encodeURIComponent(url)}`);
+export async function fetchPublicPlaylist(playlistUrl) {
+  const url = await getActiveAudioServerUrl();
+  const res = await fetch(`${url}/api/public-playlist?url=${encodeURIComponent(playlistUrl)}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Failed to load public playlist.');
@@ -213,8 +238,9 @@ export async function ensurePlayer() {
 export async function preloadTrack(uri) {
   const serverOnline = await isAudioServerOnline();
   if (serverOnline) {
+    const serverUrl = await getActiveAudioServerUrl();
     // Heat server-side cache in background
-    fetch(`${AUDIO_SERVER_URL}/audio/preload?uri=${encodeURIComponent(uri)}`, {
+    fetch(`${serverUrl}/audio/preload?uri=${encodeURIComponent(uri)}`, {
       method: 'POST',
       signal: AbortSignal.timeout(4000),
     }).catch(() => {});
@@ -247,7 +273,8 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   const serverOnline = await isAudioServerOnline();
 
   if (serverOnline) {
-    console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${AUDIO_SERVER_URL}`);
+    const serverUrl = await getActiveAudioServerUrl();
+    console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${serverUrl}`);
     // Stop any existing HTML5 audio
     if (currentHtmlAudio) {
       try {
@@ -256,7 +283,7 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
       } catch {}
     }
 
-    const audioUrl = `${AUDIO_SERVER_URL}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
+    const audioUrl = `${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
     const audio = new Audio(audioUrl);
     currentHtmlAudio = audio;
 

@@ -138,16 +138,25 @@ def get_track_bytes(raw_track_id: str) -> bytes:
         if track_id_clean in track_cache:
             return track_cache[track_id_clean]
 
-        sess = get_session()
         track_id = TrackId.from_base62(track_id_clean)
-
         logger.info(f"Fetching audio for track {track_id_clean} from Spotify...")
-        stream = sess.content_feeder().load(
-            track_id,
-            VorbisOnlyAudioQuality(AudioQuality.HIGH),
-            False,
-            None,
-        )
+
+        stream = None
+        for attempt in range(1, 3):
+            try:
+                sess = get_session()
+                stream = sess.content_feeder().load(
+                    track_id,
+                    VorbisOnlyAudioQuality(AudioQuality.HIGH),
+                    False,
+                    None,
+                )
+                if stream and stream.input_stream:
+                    break
+            except Exception as e:
+                logger.warning(f"Attempt {attempt} failed to load stream: {e}. Reconnecting session...")
+                global session
+                session = None
 
         if not stream or not stream.input_stream:
             raise HTTPException(status_code=404, detail="Track audio stream could not be loaded")
