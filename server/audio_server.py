@@ -69,6 +69,16 @@ def get_session() -> Session:
     builder = Session.Builder()
     builder.conf.stored_credentials_file = CREDENTIALS_FILE
 
+    # 0. Check SPOTIFY_CREDENTIALS env var (for cloud deployments like Render)
+    spotify_creds_env = os.getenv("SPOTIFY_CREDENTIALS")
+    if spotify_creds_env and not os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+                f.write(spotify_creds_env.strip())
+            logger.info("Wrote credentials.json from SPOTIFY_CREDENTIALS env variable!")
+        except Exception as e:
+            logger.warning(f"Failed to write SPOTIFY_CREDENTIALS: {e}")
+
     # 1. Try saved credentials.json if available
     if os.path.exists(CREDENTIALS_FILE):
         try:
@@ -84,13 +94,13 @@ def get_session() -> Session:
         logger.info(f"Authenticating with Spotify as '{SPOTIFY_USERNAME}'...")
         try:
             session = builder.user_pass(SPOTIFY_USERNAME, SPOTIFY_PASSWORD).create()
-            logger.info("Spotify session created successfully from .env!")
+            logger.info("Spotify session created successfully from credentials!")
             return session
         except Exception as e:
             logger.error(f"Failed to authenticate Spotify session: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Spotify auth failed: {e}. (Tip: Run 'npm run login' to log in with 1-click browser OAuth instead)",
+                detail=f"Spotify auth failed: {e}",
             )
 
     raise HTTPException(
@@ -101,11 +111,10 @@ def get_session() -> Session:
 
 @app.on_event("startup")
 def startup_event():
-    if SPOTIFY_USERNAME and SPOTIFY_PASSWORD:
-        try:
-            get_session()
-        except Exception as e:
-            logger.warning(f"Startup Spotify auth warning: {e}")
+    try:
+        get_session()
+    except Exception as e:
+        logger.info(f"Startup session check: {e}")
 
 
 import threading
