@@ -180,6 +180,37 @@ def root():
     }
 
 
+cached_web_token: Optional[dict] = None
+cached_web_token_expires: float = 0.0
+
+
+@app.get("/api/token")
+def get_web_token():
+    """Returns a valid Spotify Web API access token minted from the Librespot session (cached for 55m)."""
+    global cached_web_token, cached_web_token_expires
+    import time
+    now = time.time()
+
+    if cached_web_token and now < cached_web_token_expires - 300:
+        return cached_web_token
+
+    try:
+        sess = get_session()
+        token_obj = sess.tokens().get_token("user-read-private,playlist-read-private")
+        expires_in = getattr(token_obj, "expires_in", 3600) or 3600
+        cached_web_token = {
+            "access_token": token_obj.access_token,
+            "expires_in": expires_in,
+        }
+        cached_web_token_expires = now + expires_in
+        return cached_web_token
+    except Exception as e:
+        logger.error(f"Failed to mint Web API token: {e}")
+        if cached_web_token:
+            return cached_web_token
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 def health_check():
     has_creds = bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
