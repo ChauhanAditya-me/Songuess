@@ -1,6 +1,6 @@
 import { resetPlaybackQueue } from './playback';
 
-const PLAYER_NAME = 'SpotiGuess Player';
+const PLAYER_NAME = 'Songuess Player';
 
 let player = null;
 let promise = null;
@@ -33,11 +33,11 @@ function loadSdk() {
     return Promise.resolve();
   }
 
-  if (window.__spotiguessSdkPromise) {
-    return window.__spotiguessSdkPromise;
+  if (window.__songuessSdkPromise) {
+    return window.__songuessSdkPromise;
   }
 
-  window.__spotiguessSdkPromise = new Promise(resolve => {
+  window.__songuessSdkPromise = new Promise(resolve => {
     const previous = window.onSpotifyWebPlaybackSDKReady;
 
     window.onSpotifyWebPlaybackSDKReady = () => {
@@ -54,7 +54,7 @@ function loadSdk() {
     }
   });
 
-  return window.__spotiguessSdkPromise;
+  return window.__songuessSdkPromise;
 }
 
 function waitForReady(timeout = 10000) {
@@ -106,7 +106,7 @@ export async function getSpotifyPlayer() {
     player.addListener('ready', ({ device_id }) => {
       deviceId = device_id;
       sdkReady = true;
-      window.spotiguessDeviceId = device_id;
+      window.songuessDeviceId = device_id;
 
       emit('ready', device_id);
 
@@ -181,7 +181,7 @@ export function getCurrentPlayer() {
 }
 
 export function getCurrentDeviceId() {
-  return deviceId || window.spotiguessDeviceId || null;
+  return deviceId || window.songuessDeviceId || null;
 }
 
 export function isPlayerReady() {
@@ -226,7 +226,7 @@ export async function reconnectPlayer() {
   readyPromise = null;
   resolveReady = null;
   rejectReady = null;
-  window.spotiguessDeviceId = undefined;
+  window.songuessDeviceId = undefined;
 
   // 3. Clear any stuck playback queue.
   resetPlaybackQueue();

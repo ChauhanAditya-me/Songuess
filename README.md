@@ -1,16 +1,53 @@
-# React + Vite
+# Songuess 🎵
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An interactive music guessing game that tests how quickly you can recognize tracks from your favorite playlists!
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## ✨ Features
 
-## React Compiler
+- **Progressive Snippet Reveals:** Guess songs from ultra-short audio snippets (0.1s, 0.5s, 1s, etc.).
+- **Smart Song Search:** Fast fuzzy search to find and submit guesses quickly.
+- **Ultra-Fast Local Audio Backend:** Near-zero latency snippet playback and caching.
+- **Responsive Web UI:** Clean, modern interface designed for desktop and mobile browsers.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the Oxlint configuration
+## 🚀 Getting Started
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+### Prerequisites
+- [Node.js](https://nodejs.org/) (v18+)
+- [Python](https://python.org/) (v3.10+) with [FFmpeg](https://ffmpeg.org/)
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ChauhanAditya-me/songuess.git
+   cd songuess
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   pip install -r server/requirements.txt
+   ```
+
+3. Set up environment variables:
+   Copy `.env.example` to `.env` and fill in your developer credentials.
+
+4. Start the application:
+   ```bash
+   # Terminal 1: Start audio server
+   npm run server
+
+   # Terminal 2: Start frontend dev server
+   npm run dev
+   ```
+
+5. Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in your browser.
+
+---
+
+## 📜 License
+MIT License.

@@ -22,7 +22,7 @@ SPOTIFY_USERNAME = os.getenv("SPOTIFY_USERNAME")
 SPOTIFY_PASSWORD = os.getenv("SPOTIFY_PASSWORD")
 PORT = int(os.getenv("AUDIO_SERVER_PORT", 3001))
 
-app = FastAPI(title="SpotiGuess Librespot Audio Server")
+app = FastAPI(title="Songuess Audio Server")
 
 # Enable CORS for local Vite dev
 app.add_middleware(
@@ -188,7 +188,7 @@ def root():
     has_creds = bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
     authenticated = session is not None and session.is_valid()
     return {
-        "service": "SpotiGuess Librespot Audio Server",
+        "service": "Songuess Audio Server",
         "status": "online",
         "has_credentials": has_creds,
         "authenticated": authenticated,
@@ -275,8 +275,8 @@ def get_login_url():
 <head><meta charset="utf-8"><title>Spotify Connected</title></head>
 <body style="background:#121212;color:#ffffff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;">
   <div style="background:#181818;padding:40px;border-radius:12px;border:1px solid #282828;max-width:400px;box-shadow:0 8px 24px rgba(0,0,0,0.5);">
-    <h2 style="color:#1db954;margin-top:0;font-size:1.6rem;">✅ Spotify Connected!</h2>
-    <p style="color:#b3b3b3;line-height:1.5;">Your SpotiGuess audio server is now authenticated.</p>
+    <h2 style="color:#1db954;margin-top:0;font-size:1.6rem;">✅ Connected!</h2>
+    <p style="color:#b3b3b3;line-height:1.5;">Your Songuess audio server is now authenticated.</p>
     <p style="color:#888;font-size:0.85rem;margin-top:20px;">You can close this tab and return to the game.</p>
   </div>
 </body>

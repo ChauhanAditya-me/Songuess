@@ -15,7 +15,7 @@ function Callback({ code }) {
     started.current = true;
     exchangeCode(code).then(() => { window.location.replace('/'); }).catch(e => setStatus(`Failed to connect: ${e.message}`));
   }, [code]);
-  return <main className="app"><h1>SpotiGuess</h1><p>{status}</p></main>;
+  return <main className="app"><h1>Songuess</h1><p>{status}</p></main>;
 }
 
 function Home() {
@@ -42,7 +42,7 @@ function Home() {
   };
 
   return <main className="app">
-    <h1>SpotiGuess</h1>
+    <h1>Songuess</h1>
     <p>Guess the song before the time runs out.</p>
 
     {spotify.error && <p className="error">{spotify.error}</p>}
@@ -94,7 +94,7 @@ function Home() {
         {!spotify.loadingTracks && <p>{spotify.tracks.length} songs loaded</p>}
 
         {spotify.tracks.length > 0 && <section className="game">
-          <h2>SpotiGuess</h2><p>Score: <strong>{game.score}</strong></p>
+          <h2>Songuess</h2><p>Score: <strong>{game.score}</strong></p>
           {!game.gameTrack && <button onClick={game.start} disabled={!sdk.ready}>▶ Start Round</button>}
           {game.gameTrack && <>
             <p>Snippet: <strong>{game.snippetSeconds}s</strong></p>
@@ -140,7 +140,7 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   const error = params.get('error');
-  if (error) return <main className="app"><h1>SpotiGuess</h1><p>Spotify authorization was cancelled.</p></main>;
+  if (error) return <main className="app"><h1>Songuess</h1><p>Spotify authorization was cancelled.</p></main>;
   if (code) return <Callback code={code} />;
   return <Home />;
 }
