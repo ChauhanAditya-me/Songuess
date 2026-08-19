@@ -21,6 +21,10 @@ export async function generateCodeChallenge(verifier) {
 }
 
 export async function beginSpotifyLogin() {
+  if (!CLIENT_ID) {
+    alert('Spotify Client ID is not configured. Please add VITE_SPOTIFY_CLIENT_ID in your Vercel Environment Variables.');
+    return;
+  }
   const verifier = generateCodeVerifier();
   const challenge = await generateCodeChallenge(verifier);
   sessionStorage.setItem('code_verifier', verifier);
