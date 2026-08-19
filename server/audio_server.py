@@ -20,7 +20,7 @@ load_dotenv()
 
 SPOTIFY_USERNAME = os.getenv("SPOTIFY_USERNAME")
 SPOTIFY_PASSWORD = os.getenv("SPOTIFY_PASSWORD")
-PORT = int(os.getenv("AUDIO_SERVER_PORT", 3001))
+PORT = int(os.getenv("PORT", os.getenv("AUDIO_SERVER_PORT", 3001)))
 
 app = FastAPI(title="Songuess Audio Server")
 
