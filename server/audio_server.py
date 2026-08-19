@@ -301,6 +301,39 @@ def get_login_url():
         return {"authenticated": False, "auth_url": auth_url}
 
 
+from pydantic import BaseModel
+
+
+class CodeSubmitPayload(BaseModel):
+    code: str
+
+
+@app.post("/auth/submit-code")
+def submit_oauth_code(payload: CodeSubmitPayload):
+    global current_oauth_handler, session
+    clean_code = payload.code.strip()
+    if "code=" in clean_code:
+        clean_code = clean_code.split("code=")[1].split("&")[0]
+
+    if not current_oauth_handler:
+        current_oauth_handler = OAuth(MercuryRequests.keymaster_client_id, "http://127.0.0.1:5588/login", None)
+
+    try:
+        current_oauth_handler.set_code(clean_code)
+        current_oauth_handler.request_token()
+        creds = current_oauth_handler.get_credentials()
+
+        builder = Session.Builder()
+        builder.conf.stored_credentials_file = CREDENTIALS_FILE
+        builder.login_credentials = creds
+        session = builder.create()
+        logger.info("Successfully authenticated Spotify session via code submission!")
+        return {"success": True, "authenticated": True}
+    except Exception as e:
+        logger.error(f"Failed to complete OAuth with code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/audio/snippet")
 def get_snippet(
     uri: str = Query(..., description="Spotify track URI (e.g. spotify:track:...) or ID"),

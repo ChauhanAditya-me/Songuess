@@ -3,7 +3,7 @@ import { beginSpotifyLogin, exchangeCode, getAccessToken } from './spotify/auth'
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
-import { isAudioServerOnline, getAudioServerAuthStatus, startAudioServerLogin } from './spotify/playback';
+import { isAudioServerOnline, getAudioServerAuthStatus, startAudioServerLogin, submitAudioServerCode } from './spotify/playback';
 import './App.css';
 import SongSearch from './components/SongSearch';
 
@@ -21,6 +21,8 @@ function Callback({ code }) {
 function Home() {
   const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
   const serverReady = Boolean(serverStatus.online && serverStatus.authenticated);
+  const [authCodeInput, setAuthCodeInput] = useState('');
+  const [submittingCode, setSubmittingCode] = useState(false);
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
   const game = useGame(spotify.tracks, sdk.ready || serverReady);
@@ -42,6 +44,19 @@ function Home() {
     setTimeout(() => clearInterval(interval), 60000);
   };
 
+  const handleCodeSubmit = async (e) => {
+    e.preventDefault();
+    if (!authCodeInput.trim()) return;
+    setSubmittingCode(true);
+    const ok = await submitAudioServerCode(authCodeInput.trim());
+    setSubmittingCode(false);
+    if (ok) {
+      window.location.reload();
+    } else {
+      alert('Failed to authenticate with that code. Please try clicking Authenticate again.');
+    }
+  };
+
   return <main className="app">
     <h1>Songuess</h1>
     <p>Guess the song before the time runs out.</p>
@@ -55,11 +70,24 @@ function Home() {
       {serverStatus.online && serverStatus.authenticated ? (
         <p style={{ color: '#1db954', fontWeight: 'bold' }}>⚡ Ultra-Fast Audio Server Active</p>
       ) : serverStatus.online && !serverStatus.authenticated ? (
-        <div style={{ margin: '10px 0' }}>
-          <p style={{ color: '#e5a50a' }}>⚠️ Audio server is running but needs 1-click Spotify authentication</p>
+        <div style={{ margin: '15px 0', padding: '15px', background: '#181818', borderRadius: '8px', border: '1px solid #282828' }}>
+          <p style={{ color: '#e5a50a', marginTop: 0 }}>⚠️ Audio server is online but needs 1-time Spotify link</p>
           <button className="btn-reconnect" onClick={handleAudioServerAuth}>
             🔑 1-Click Authenticate Audio Server
           </button>
+
+          <form onSubmit={handleCodeSubmit} style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
+            <input
+              type="text"
+              placeholder="Paste redirected URL or code here..."
+              value={authCodeInput}
+              onChange={e => setAuthCodeInput(e.target.value)}
+              style={{ width: '280px', padding: '6px 10px', borderRadius: '4px', border: '1px solid #444', background: '#222', color: '#fff' }}
+            />
+            <button type="submit" disabled={submittingCode}>
+              {submittingCode ? 'Linking...' : 'Submit Code'}
+            </button>
+          </form>
         </div>
       ) : (
         <>

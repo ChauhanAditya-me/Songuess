@@ -71,6 +71,19 @@ export async function startAudioServerLogin() {
   }
 }
 
+export async function submitAudioServerCode(code) {
+  try {
+    const res = await fetch(`${AUDIO_SERVER_URL}/auth/submit-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Reset cached server availability on demand
 export function checkServerStatus() {
   serverAvailable = null;
