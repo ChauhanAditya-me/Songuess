@@ -72,14 +72,19 @@ export function useGame(tracks, playerReady) {
     const requestId = ++requestRef.current;
 
     setError(null);
-    setStatus('playing');
+    setStatus('loading');
     setResult(null);
 
     try {
       await playSnippet(
         track.uri,
         SNIPPET_DURATIONS[targetStage],
-        () => requestId === requestRef.current
+        () => requestId === requestRef.current,
+        () => {
+          if (requestId === requestRef.current) {
+            setStatus('playing');
+          }
+        }
       );
 
       if (requestId === requestRef.current) {

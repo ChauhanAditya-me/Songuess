@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { beginSpotifyLogin, exchangeCode, getAccessToken } from './spotify/auth';
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
+import { isAudioServerOnline } from './spotify/playback';
 import './App.css';
 import SongSearch from './components/SongSearch';
 
@@ -21,6 +22,11 @@ function Home() {
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
   const game = useGame(spotify.tracks, sdk.ready);
+  const [serverActive, setServerActive] = useState(false);
+
+  useEffect(() => {
+    isAudioServerOnline().then(setServerActive);
+  }, []);
 
   return <main className="app">
     <h1>SpotiGuess</h1>
@@ -32,22 +38,28 @@ function Home() {
     {spotify.profile && <>
       <h2>Welcome, {spotify.profile.display_name}!</h2>
       <p>Spotify Connected 🎵</p>
-      {sdk.error && sdk.error !== 'The operation is not allowed.' && (
-        <p className="error">Player error: {sdk.error}</p>
-      )}
-      {sdk.reconnecting && <p>🔄 Reconnecting player...</p>}
-      {sdk.ready && !sdk.reconnecting && <p>🎧 SpotiGuess player is ready</p>}
-      {(sdk.ready || sdk.error) && !sdk.reconnecting && (
-        <button
-          className="btn-reconnect"
-          disabled={sdk.reconnecting}
-          onClick={async () => {
-            await game.reset();
-            await sdk.reconnect();
-          }}
-        >
-          🔄 Reconnect Player
-        </button>
+      {serverActive ? (
+        <p style={{ color: '#1db954', fontWeight: 'bold' }}>⚡ Ultra-Fast Audio Server Active</p>
+      ) : (
+        <>
+          {sdk.error && sdk.error !== 'The operation is not allowed.' && (
+            <p className="error">Player error: {sdk.error}</p>
+          )}
+          {sdk.reconnecting && <p>🔄 Reconnecting player...</p>}
+          {sdk.ready && !sdk.reconnecting && <p>🎧 Spotify Web Player is ready</p>}
+          {(sdk.ready || sdk.error) && !sdk.reconnecting && (
+            <button
+              className="btn-reconnect"
+              disabled={sdk.reconnecting}
+              onClick={async () => {
+                await game.reset();
+                await sdk.reconnect();
+              }}
+            >
+              🔄 Reconnect Player
+            </button>
+          )}
+        </>
       )}
 
       <h2>Your Playlists</h2>
@@ -66,7 +78,8 @@ function Home() {
           {!game.gameTrack && <button onClick={game.start} disabled={!sdk.ready}>▶ Start Round</button>}
           {game.gameTrack && <>
             <p>Snippet: <strong>{game.snippetSeconds}s</strong></p>
-            {game.status === 'playing' && <p>🔊 Playing...</p>}
+            {game.status === 'loading' && <p style={{ color: '#e5a50a' }}>⏳ Loading snippet...</p>}
+            {game.status === 'playing' && <p style={{ color: '#1db954' }}>🔊 Playing...</p>}
             {['loading', 'playing', 'paused'].includes(game.status) && (
               <form onSubmit={game.submitGuess}>
                 <SongSearch

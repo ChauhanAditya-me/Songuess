@@ -1,7 +1,11 @@
 import { startPlayback } from './api';
 import { getCurrentPlayer, getSpotifyPlayer } from './player';
 
+const AUDIO_SERVER_URL = 'http://127.0.0.1:3001';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+let currentHtmlAudio = null;
+let serverAvailable = null; // null: unknown, true: online, false: offline
 
 let playbackQueue = Promise.resolve();
 let operationId = 0;
@@ -11,6 +15,12 @@ export function resetPlaybackQueue() {
   playbackQueue = Promise.resolve();
   operationId++;
   savedVolume = 0.5;
+  if (currentHtmlAudio) {
+    try {
+      currentHtmlAudio.pause();
+      currentHtmlAudio = null;
+    } catch {}
+  }
 }
 
 function enqueue(task) {
@@ -19,8 +29,22 @@ function enqueue(task) {
   return run;
 }
 
-function currentOperation(id, isCurrent) {
-  return id === operationId && isCurrent();
+export async function isAudioServerOnline() {
+  if (serverAvailable !== null) return serverAvailable;
+  try {
+    const res = await fetch(`${AUDIO_SERVER_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    const data = await res.json();
+    serverAvailable = Boolean(data?.status === 'ok');
+  } catch {
+    serverAvailable = false;
+  }
+  return serverAvailable;
+}
+
+// Reset cached server availability on demand
+export function checkServerStatus() {
+  serverAvailable = null;
+  return isAudioServerOnline();
 }
 
 async function getState(player) {
@@ -89,16 +113,12 @@ async function loadTrackInternal(player, deviceId, uri) {
     savedVolume = 0.5;
   }
 
-  // Keep loading completely silent. If Spotify starts before the SDK reports
-  // the new track, the user never hears the beginning of the full song.
   await setVolume(player, 0);
   await pauseConfirmed(player);
 
   let loaded = false;
   let lastError = null;
 
-  // Spotify can occasionally accept the request but take longer to expose
-  // the track through the Web Playback SDK. Give it a second attempt.
   for (let attempt = 0; attempt < 2 && !loaded; attempt++) {
     try {
       await startPlayback(deviceId, uri);
@@ -122,8 +142,6 @@ async function loadTrackInternal(player, deviceId, uri) {
 
   await pauseConfirmed(player);
   await seekToZero(player);
-
-  // Leave the track loaded and paused. This is the important preload state.
   await setVolume(player, savedVolume || 0.5);
 }
 
@@ -137,31 +155,20 @@ export async function ensurePlayer() {
   return result;
 }
 
-export async function waitForTrack(uri, timeout = 8000) {
-  const player = getCurrentPlayer();
-
-  if (!player) {
-    throw new Error('Spotify player is not initialized.');
-  }
-
-  const state = await waitForState(
-    player,
-    current => current.track_window?.current_track?.uri === uri,
-    timeout
-  );
-
-  if (!state) {
-    throw new Error('Spotify took too long to load the track.');
-  }
-
-  return state;
-}
-
 /*
- * Prepares a track and leaves it paused at 0:00.
- * This is safe to call while the game is idle.
+ * Prepares a track and caches it into memory (or SDK).
  */
 export async function preloadTrack(uri) {
+  const serverOnline = await isAudioServerOnline();
+  if (serverOnline) {
+    // Heat server-side cache in background
+    fetch(`${AUDIO_SERVER_URL}/audio/preload?uri=${encodeURIComponent(uri)}`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => {});
+    return true;
+  }
+
   return enqueue(async () => {
     const { player, deviceId } = await ensurePlayer();
 
@@ -181,89 +188,47 @@ export async function loadTrack(uri) {
   return preloadTrack(uri);
 }
 
-async function playSnippetInternal(uri, seconds, id, isCurrent) {
-  const player = getCurrentPlayer();
+/*
+ * Plays an exact audio snippet using the Librespot backend (or falls back to SDK).
+ */
+export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay = () => {}) {
+  const serverOnline = await isAudioServerOnline();
 
-  if (!player) {
-    throw new Error('Spotify player is not initialized.');
-  }
-
-  let state = await getState(player);
-  const loaded = state?.track_window?.current_track?.uri === uri;
-
-  if (!loaded) {
-    const { deviceId } = await ensurePlayer();
-
-    if (!currentOperation(id, isCurrent)) return;
-
-    await loadTrackInternal(player, deviceId, uri);
-
-    if (!currentOperation(id, isCurrent)) {
-      await pauseConfirmed(player);
-      return;
+  if (serverOnline) {
+    // Stop any existing HTML5 audio
+    if (currentHtmlAudio) {
+      try {
+        currentHtmlAudio.pause();
+        currentHtmlAudio = null;
+      } catch {}
     }
+
+    const audioUrl = `${AUDIO_SERVER_URL}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
+    const audio = new Audio(audioUrl);
+    currentHtmlAudio = audio;
+
+    return new Promise((resolve, reject) => {
+      audio.onplaying = () => {
+        if (isCurrent()) {
+          onPlay?.();
+        }
+      };
+
+      audio.onended = () => {
+        if (currentHtmlAudio === audio) currentHtmlAudio = null;
+        resolve();
+      };
+
+      audio.onerror = () => {
+        if (currentHtmlAudio === audio) currentHtmlAudio = null;
+        reject(new Error('Audio playback failed from server.'));
+      };
+
+      audio.play().catch(reject);
+    });
   }
 
-  if (!currentOperation(id, isCurrent)) {
-    await pauseConfirmed(player);
-    return;
-  }
-
-  await pauseConfirmed(player);
-
-  if (!currentOperation(id, isCurrent)) return;
-
-  await seekToZero(player);
-
-  if (!currentOperation(id, isCurrent)) return;
-
-  if (savedVolume !== null) {
-    await setVolume(player, savedVolume);
-  }
-
-  await player.resume();
-  state.paused === false
-
-  state = await waitForState(
-    player,
-    current =>
-      current.track_window?.current_track?.uri === uri &&
-      current.paused === false,
-    1600
-  );
-
-  if (!state) {
-    throw new Error('Spotify did not start playback.');
-  }
-
-  const targetMs = Math.max(50, seconds * 1000);
-
-  while (currentOperation(id, isCurrent)) {
-    state = await getState(player);
-
-    if (!state || state.track_window?.current_track?.uri !== uri) break;
-
-    if (Number(state.position || 0) >= targetMs) break;
-
-    await sleep(seconds <= 0.5 ? 10 : 20);
-  }
-
-  if (!currentOperation(id, isCurrent)) {
-    await pauseConfirmed(player);
-    return;
-  }
-
-  // Mute first so a delayed pause command cannot leak more audio.
-  await setVolume(player, 0);
-  await pauseConfirmed(player);
-  await seekToZero(player);
-
-  if (savedVolume !== null) {
-    await setVolume(player, savedVolume);
-  }
-}
-
-export async function playSnippet(uri, seconds, isCurrent = () => true) {
+  // --- Fallback to Spotify Web Playback SDK ---
   const player = getCurrentPlayer();
   if (!player) throw new Error('Spotify player is not initialized.');
 
@@ -277,21 +242,20 @@ export async function playSnippet(uri, seconds, isCurrent = () => true) {
   if (!isCurrent()) return;
 
   await player.pause().catch(() => {});
-
   if (!isCurrent()) return;
 
   await sleep(100);
-
   await player.seek(0).catch(() => {});
-
   if (!isCurrent()) return;
 
   await sleep(100);
-
-  const vol = (savedVolume && savedVolume > 0.05) ? savedVolume : 0.5;
+  const vol = savedVolume && savedVolume > 0.05 ? savedVolume : 0.5;
   await player.setVolume(vol).catch(() => {});
 
   await player.resume();
+  if (isCurrent()) {
+    onPlay?.();
+  }
 
   if (!isCurrent()) {
     await player.pause().catch(() => {});
@@ -330,6 +294,18 @@ export async function replaySnippet(uri, seconds, isCurrent = () => true) {
 export async function stopPlayback() {
   ++operationId;
 
+  // Stop HTML5 audio if active
+  if (currentHtmlAudio) {
+    try {
+      currentHtmlAudio.pause();
+      currentHtmlAudio.currentTime = 0;
+      currentHtmlAudio = null;
+    } catch {}
+  }
+
+  const serverOnline = await isAudioServerOnline();
+  if (serverOnline) return;
+
   return enqueue(async () => {
     const player = getCurrentPlayer();
     if (!player) return;
@@ -338,7 +314,7 @@ export async function stopPlayback() {
     await pauseConfirmed(player);
     await seekToZero(player);
 
-    const vol = (savedVolume && savedVolume > 0.05) ? savedVolume : 0.5;
+    const vol = savedVolume && savedVolume > 0.05 ? savedVolume : 0.5;
     await setVolume(player, vol);
   });
 }

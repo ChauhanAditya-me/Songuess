@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "python server/audio_server.py",
+    "login": "python server/login.py",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
