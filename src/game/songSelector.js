@@ -1,5 +1,13 @@
 export function getPlayableTracks(tracks) {
-  return tracks.filter(track => track?.type === 'track' && track?.uri);
+  if (!Array.isArray(tracks)) return [];
+  return tracks
+    .filter(track => track && track.name && (track.uri || track.id) && !track.is_local)
+    .map(track => {
+      if (!track.uri && track.id) {
+        return { ...track, uri: `spotify:track:${track.id}` };
+      }
+      return track;
+    });
 }
 
 export function pickRandomTrack(tracks) {
