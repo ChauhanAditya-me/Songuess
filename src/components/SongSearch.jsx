@@ -10,6 +10,8 @@ function normalize(text) {
     .trim();
 }
 
+import { SearchIcon } from './Icons';
+
 export default function SongSearch({ tracks, value, onChange, onSelect }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -111,43 +113,57 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
 
   return (
     <div className="song-search" ref={containerRef}>
-      <input
-        value={value}
-        onChange={event => {
-          onChange(event.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => {
-          if (value) setOpen(true);
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder="Search for a song..."
-        autoComplete="off"
-      />
+      <div className="song-search-field">
+        <SearchIcon size={18} color="#777777" className="search-field-icon" />
+        <input
+          value={value}
+          onChange={event => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            if (value) setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Search songs..."
+          autoComplete="off"
+          spellCheck="false"
+        />
+      </div>
 
       {open && value && results.length > 0 && (
         <div className="song-search-results">
-          {results.map((track, index) => (
-            <button
-              type="button"
-              className={`song-search-result ${
-                index === activeIndex ? 'active' : ''
-              }`}
-              key={track.id}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => selectTrack(track)}
-            >
-              <span className="song-search-icon">🎵</span>
+          {results.map((track, index) => {
+            const cover =
+              track.album?.images?.[2]?.url ||
+              track.album?.images?.[0]?.url ||
+              null;
 
-              <span className="song-search-info">
-                <strong>{track.name}</strong>
+            return (
+              <button
+                type="button"
+                className={`song-search-result ${
+                  index === activeIndex ? 'active' : ''
+                }`}
+                key={track.id || `${track.name}-${index}`}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => selectTrack(track)}
+              >
+                {cover ? (
+                  <img src={cover} alt="" className="search-result-thumb" />
+                ) : (
+                  <span className="search-result-fallback">🎵</span>
+                )}
 
-                <small>
-                  {track.artists?.map(a => a.name).join(', ')}
-                </small>
-              </span>
-            </button>
-          ))}
+                <span className="song-search-info">
+                  <strong className="search-track-name">{track.name}</strong>
+                  <small className="search-track-artists">
+                    {track.artists?.map(a => a.name).join(', ')}
+                  </small>
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -158,4 +174,4 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
       )}
     </div>
   );
-}
+}

@@ -13,7 +13,17 @@ export function useSpotify() {
   useEffect(() => {
     if (!getAccessToken()) return;
     Promise.all([getProfile(), getPlaylists()])
-      .then(([p, lists]) => { setProfile(p); setPlaylists(lists); })
+      .then(([p, lists]) => {
+        setProfile(p);
+        const likedItem = {
+          id: '__liked__',
+          name: 'Liked Songs',
+          isLiked: true,
+          owner: { display_name: p.display_name || 'You' },
+          images: [{ url: 'https://misc.scdn.co/liked-songs/liked-songs-640.png' }],
+        };
+        setPlaylists([likedItem, ...(lists || [])]);
+      })
       .catch(e => setError(e.message));
   }, []);
 

@@ -160,17 +160,21 @@ export function useGame(tracks, playerReady) {
     await play(gameTrack, nextStage);
   }, [gameTrack, stage, play]);
 
-  const submitGuess = useCallback(async event => {
-    event?.preventDefault();
+  const [guessedSeconds, setGuessedSeconds] = useState(0);
+
+  const submitGuess = useCallback(async (customGuessText = null) => {
+    const guessText = customGuessText || guess;
 
     if (!gameTrack || !['playing', 'paused', 'loading'].includes(status)) {
       return;
     }
 
-    if (isCorrectGuess(guess, gameTrack)) {
+    if (isCorrectGuess(guessText, gameTrack)) {
       ++requestRef.current;
       stopPlayback().catch(() => {});
 
+      const wonAtSeconds = SNIPPET_DURATIONS[stage];
+      setGuessedSeconds(wonAtSeconds);
       setScore(score => score + 1000);
       setResult('correct');
       setStatus('correct');
@@ -180,7 +184,7 @@ export function useGame(tracks, playerReady) {
     } else {
       setResult('wrong');
     }
-  }, [gameTrack, guess, status, prepareNext]);
+  }, [gameTrack, guess, status, stage, prepareNext]);
 
   const stop = useCallback(async () => {
     ++requestRef.current;
@@ -244,6 +248,7 @@ export function useGame(tracks, playerReady) {
     gameTrack,
     stage,
     snippetSeconds: SNIPPET_DURATIONS[stage],
+    guessedSeconds: guessedSeconds || SNIPPET_DURATIONS[stage],
     status,
     error,
     guess,

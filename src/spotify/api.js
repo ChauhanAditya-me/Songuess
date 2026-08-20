@@ -25,20 +25,45 @@ export async function getPlaylists() {
   return data.items || [];
 }
 
+export async function getLikedTracks() {
+  const tracks = [];
+  let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
+  let pages = 0;
+
+  while (url && pages < 3) {
+    const data = await (await spotifyFetch(url)).json();
+    tracks.push(
+      ...(data.items || [])
+        .map(item => item.track)
+        .filter(item => item?.type === 'track' && item.uri)
+    );
+    url = data.next;
+    pages++;
+  }
+
+  return tracks;
+}
+
 export async function getPlaylistTracks(playlistId) {
+  if (playlistId === '__liked__') {
+    return getLikedTracks();
+  }
+
   const tracks = [];
   let url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
+  let pages = 0;
 
-  while (url) {
+  while (url && pages < 4) {
     const data = await (await spotifyFetch(url)).json();
 
     tracks.push(
       ...(data.items || [])
-        .map(item => item.item)
+        .map(item => item.item || item.track)
         .filter(item => item?.type === 'track' && item.uri)
     );
 
     url = data.next;
+    pages++;
   }
 
   return tracks;
