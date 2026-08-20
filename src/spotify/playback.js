@@ -1,30 +1,40 @@
 import { startPlayback } from './api';
 import { getCurrentPlayer, getSpotifyPlayer } from './player';
 
-let activeAudioServerUrl = 'https://songuess.onrender.com';
+let resolvedServerUrl = null;
+let serverUrlPromise = null;
 
 export async function getActiveAudioServerUrl() {
-  if (import.meta.env.VITE_AUDIO_SERVER_URL) {
-    return import.meta.env.VITE_AUDIO_SERVER_URL;
-  }
-  if (
-    typeof window !== 'undefined' &&
-    window.location.protocol === 'https:' &&
-    !window.location.hostname.includes('localhost') &&
-    !window.location.hostname.includes('127.0.0.1')
-  ) {
-    return 'https://songuess.onrender.com';
-  }
-  // On local dev machine: try local 3001 first; if not running, auto-route to Render!
-  try {
-    const res = await fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(800) });
-    if (res.ok) {
-      activeAudioServerUrl = 'http://127.0.0.1:3001';
-      return activeAudioServerUrl;
+  if (resolvedServerUrl) return resolvedServerUrl;
+  if (serverUrlPromise) return serverUrlPromise;
+
+  serverUrlPromise = (async () => {
+    if (import.meta.env.VITE_AUDIO_SERVER_URL) {
+      resolvedServerUrl = import.meta.env.VITE_AUDIO_SERVER_URL;
+      return resolvedServerUrl;
     }
-  } catch {}
-  activeAudioServerUrl = 'https://songuess.onrender.com';
-  return activeAudioServerUrl;
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      !window.location.hostname.includes('localhost') &&
+      !window.location.hostname.includes('127.0.0.1')
+    ) {
+      resolvedServerUrl = 'https://songuess.onrender.com';
+      return resolvedServerUrl;
+    }
+    // On local dev machine: try local 3001 first (with short 200ms timeout)
+    try {
+      const res = await fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(200) });
+      if (res.ok) {
+        resolvedServerUrl = 'http://127.0.0.1:3001';
+        return resolvedServerUrl;
+      }
+    } catch {}
+    resolvedServerUrl = 'https://songuess.onrender.com';
+    return resolvedServerUrl;
+  })();
+
+  return serverUrlPromise;
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -251,37 +261,51 @@ function getAudioContext() {
   return audioCtx;
 }
 
+const inFlightPreloads = new Map();
+
 export async function fetchAndCacheTrackAudio(uri) {
+  if (!uri) return null;
   if (audioBufferCache.has(uri)) {
     return audioBufferCache.get(uri);
   }
-
-  const serverUrl = await getActiveAudioServerUrl();
-  const res = await fetch(`${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=15`);
-  if (!res.ok) {
-    throw new Error('Failed to load audio snippet from server');
+  if (inFlightPreloads.has(uri)) {
+    return inFlightPreloads.get(uri);
   }
 
-  const arrayBuffer = await res.arrayBuffer();
-  const ctx = getAudioContext();
-  if (ctx) {
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (audioBufferCache.size > 15) {
-      const firstKey = audioBufferCache.keys().next().value;
-      audioBufferCache.delete(firstKey);
+  const promise = (async () => {
+    const serverUrl = await getActiveAudioServerUrl();
+    const res = await fetch(`${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=15`);
+    if (!res.ok) {
+      throw new Error('Failed to load audio snippet from server');
     }
-    audioBufferCache.set(uri, audioBuffer);
-    return audioBuffer;
-  }
-  return null;
+
+    const arrayBuffer = await res.arrayBuffer();
+    const ctx = getAudioContext();
+    if (ctx) {
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      if (audioBufferCache.size > 25) {
+        const firstKey = audioBufferCache.keys().next().value;
+        audioBufferCache.delete(firstKey);
+      }
+      audioBufferCache.set(uri, audioBuffer);
+      return audioBuffer;
+    }
+    return null;
+  })().finally(() => {
+    inFlightPreloads.delete(uri);
+  });
+
+  inFlightPreloads.set(uri, promise);
+  return promise;
 }
 
 /*
  * Prepares a track and caches it into browser RAM in background.
  */
 export async function preloadTrack(uri) {
+  if (!uri) return false;
   try {
-    fetchAndCacheTrackAudio(uri).catch(() => {});
+    await fetchAndCacheTrackAudio(uri);
     return true;
   } catch {
     return false;
@@ -379,8 +403,19 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   });
 }
 
+const activeAudioSet = new Set();
+
+function registerAudio(audio) {
+  if (!audio) return audio;
+  activeAudioSet.add(audio);
+  audio.addEventListener('ended', () => activeAudioSet.delete(audio), { once: true });
+  audio.addEventListener('error', () => activeAudioSet.delete(audio), { once: true });
+  return audio;
+}
+
 function killAudioElement(audio) {
   if (!audio) return;
+  activeAudioSet.delete(audio);
   try {
     audio.pause();
     audio.currentTime = 0;
@@ -391,82 +426,57 @@ function killAudioElement(audio) {
 }
 
 let currentFullTrackId = 0;
-let activeFullAudio = null;
-let activeFullAudioSource = null;
+let fullTrackDelayTimer = null;
 
 /*
- * Plays the full song audio on the Result (Win / Lost) screens.
- * Starts INSTANTLY (0ms) using the in-memory RAM snippet, then seamlessly continues full MP3 playback!
+ * Plays the full song audio on the Result (Win / Lost) screens after a short delay (400ms).
+ * Plays only the clean full MP3 stream with zero overlap or volume spikes.
  */
-export async function playFullTrack(uri) {
+export async function playFullTrack(uri, delayMs = 400) {
   await stopPlayback();
   const thisTrackId = ++currentFullTrackId;
 
-  const ctx = getAudioContext();
-  const cachedBuffer = audioBufferCache.get(uri);
-
-  // 1. Play instantly from RAM (0ms latency!)
-  if (ctx && cachedBuffer && thisTrackId === currentFullTrackId) {
-    try {
-      const source = ctx.createBufferSource();
-      source.buffer = cachedBuffer;
-      source.connect(ctx.destination);
-      activeFullAudioSource = source;
-      source.start(0, 0);
-    } catch {}
+  if (fullTrackDelayTimer) {
+    clearTimeout(fullTrackDelayTimer);
+    fullTrackDelayTimer = null;
   }
 
-  // 2. Concurrently load full track MP3 stream
-  try {
-    const serverUrl = await getActiveAudioServerUrl();
-    if (thisTrackId !== currentFullTrackId) {
-      if (activeFullAudioSource) {
-        try {
-          activeFullAudioSource.stop();
-          activeFullAudioSource.disconnect();
-        } catch {}
-        activeFullAudioSource = null;
-      }
-      return;
-    }
+  fullTrackDelayTimer = setTimeout(async () => {
+    fullTrackDelayTimer = null;
+    if (thisTrackId !== currentFullTrackId) return;
 
-    const audioUrl = `${serverUrl}/audio/full?uri=${encodeURIComponent(uri)}`;
-    const audio = new Audio();
-    activeFullAudio = audio;
-    audio.volume = 0.85;
+    try {
+      const serverUrl = await getActiveAudioServerUrl();
+      if (thisTrackId !== currentFullTrackId) return;
 
-    audio.onplaying = () => {
+      const audioUrl = `${serverUrl}/audio/full?uri=${encodeURIComponent(uri)}`;
+      const audio = registerAudio(new Audio());
+      currentHtmlAudio = audio;
+      audio.volume = 0.85;
+
+      audio.onplaying = () => {
+        if (thisTrackId !== currentFullTrackId) {
+          killAudioElement(audio);
+          if (currentHtmlAudio === audio) currentHtmlAudio = null;
+        }
+      };
+
+      audio.src = audioUrl;
+
       if (thisTrackId !== currentFullTrackId) {
         killAudioElement(audio);
-        if (activeFullAudio === audio) activeFullAudio = null;
+        if (currentHtmlAudio === audio) currentHtmlAudio = null;
         return;
       }
 
-      // Once the full stream is playing, smoothly disconnect the temporary RAM snippet node
-      if (activeFullAudioSource) {
-        try {
-          activeFullAudioSource.stop();
-          activeFullAudioSource.disconnect();
-        } catch {}
-        activeFullAudioSource = null;
+      await audio.play().catch(() => {});
+
+      if (thisTrackId !== currentFullTrackId) {
+        killAudioElement(audio);
+        if (currentHtmlAudio === audio) currentHtmlAudio = null;
       }
-    };
-
-    audio.src = audioUrl;
-
-    if (thisTrackId !== currentFullTrackId) {
-      killAudioElement(audio);
-      if (activeFullAudio === audio) activeFullAudio = null;
-      return;
-    }
-
-    await audio.play().catch(() => {});
-
-    if (thisTrackId !== currentFullTrackId) {
-      killAudioElement(audio);
-      if (activeFullAudio === audio) activeFullAudio = null;
-    }
-  } catch {}
+    } catch {}
+  }, delayMs);
 }
 
 export async function replaySnippet(uri, seconds, isCurrent = () => true) {
@@ -477,19 +487,17 @@ export async function stopPlayback() {
   ++operationId;
   ++currentFullTrackId; // Invalidate any in-flight full track streaming
 
+  if (fullTrackDelayTimer) {
+    clearTimeout(fullTrackDelayTimer);
+    fullTrackDelayTimer = null;
+  }
+
   if (currentPlaybackTimeout) {
     clearTimeout(currentPlaybackTimeout);
     currentPlaybackTimeout = null;
   }
 
-  if (activeFullAudioSource) {
-    try {
-      activeFullAudioSource.stop();
-      activeFullAudioSource.disconnect();
-    } catch {}
-    activeFullAudioSource = null;
-  }
-
+  // Stop current Web Audio source node
   if (currentSourceNode) {
     try {
       currentSourceNode.stop();
@@ -498,16 +506,20 @@ export async function stopPlayback() {
     currentSourceNode = null;
   }
 
-  // Hard kill any full track HTML5 audio
-  if (activeFullAudio) {
-    killAudioElement(activeFullAudio);
-    activeFullAudio = null;
+  // Kill all registered HTML5 Audio instances
+  for (const audio of activeAudioSet) {
+    killAudioElement(audio);
   }
+  activeAudioSet.clear();
 
-  // Hard kill any regular snippet HTML5 audio
   if (currentHtmlAudio) {
     killAudioElement(currentHtmlAudio);
     currentHtmlAudio = null;
+  }
+
+  // Kill any DOM audio elements
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll('audio').forEach(killAudioElement);
   }
 
   const player = getCurrentPlayer();

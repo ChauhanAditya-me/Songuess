@@ -136,6 +136,7 @@ export function useGame(tracks, playerReady) {
       setStatus('gave_up');
       setStreak(0);
       stopPlayback().catch(() => {});
+      prepareNext(gameTrack.id);
       return;
     }
 

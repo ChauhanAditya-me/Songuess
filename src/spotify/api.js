@@ -97,81 +97,69 @@ function extractTracks(items) {
   return tracks;
 }
 
+const playlistCache = new Map();
+
 export async function getPlaylistTracks(playlistId) {
+  if (playlistCache.has(playlistId)) {
+    return playlistCache.get(playlistId);
+  }
+
   if (playlistId === '__liked__') {
-    return getLikedTracks();
+    const tracks = await getLikedTracks();
+    if (tracks.length > 0) playlistCache.set(playlistId, tracks);
+    return tracks;
   }
 
-  let tracks = [];
-
-  // --- Strategy 1: GET /v1/playlists/{id} (full playlist object, no market) ---
-  try {
-    const res = await rawSpotifyFetch(
-      `https://api.spotify.com/v1/playlists/${playlistId}`
-    );
-    console.warn(`[PlaylistLoader] Strategy 1 /playlists/${playlistId}: status=${res?.status}`);
-    if (res?.ok) {
-      const data = await res.json();
-      const totalReported = data?.tracks?.total ?? 0;
-      const itemCount = data?.tracks?.items?.length ?? 0;
-      console.warn(`[PlaylistLoader] Strategy 1 response: total=${totalReported}, items=${itemCount}`);
-      tracks = extractTracks(data?.tracks?.items);
-      console.warn(`[PlaylistLoader] Strategy 1 extracted ${tracks.length} playable tracks`);
-
-      let nextUrl = data?.tracks?.next;
-      let pages = 1;
-      while (nextUrl && pages < 5 && tracks.length < totalReported) {
-        const pageRes = await rawSpotifyFetch(nextUrl);
-        if (!pageRes?.ok) break;
-        const pageData = await pageRes.json();
-        tracks.push(...extractTracks(pageData.items));
-        nextUrl = pageData.next;
-        pages++;
+  // Fast Parallel Strategy: Kick off client direct fetch and server fetch concurrently
+  const fetchDirect = async () => {
+    try {
+      const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${playlistId}`);
+      if (res?.ok) {
+        const data = await res.json();
+        const extracted = extractTracks(data?.tracks?.items);
+        if (extracted.length > 0) return extracted;
       }
-    }
-  } catch (e) {
-    console.warn('[PlaylistLoader] Strategy 1 error:', e.message);
-  }
+    } catch {}
 
-  if (tracks.length > 0) return tracks;
-
-  // --- Strategy 2: GET /v1/playlists/{id}/tracks (tracks sub-endpoint) ---
-  try {
-    let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`;
-    let pages = 0;
-
-    while (nextUrl && pages < 5) {
-      const pageRes = await rawSpotifyFetch(nextUrl);
-      console.warn(`[PlaylistLoader] Strategy 2 /tracks page ${pages}: status=${pageRes?.status}`);
-      if (!pageRes?.ok) break;
-      const pageData = await pageRes.json();
-      tracks.push(...extractTracks(pageData.items));
-      nextUrl = pageData.next;
-      pages++;
-    }
-  } catch (e) {
-    console.warn('[PlaylistLoader] Strategy 2 error:', e.message);
-  }
-
-  if (tracks.length > 0) return tracks;
-
-  // --- Strategy 3: Render backend loader with Librespot token ---
-  try {
-    const serverUrl = await getActiveAudioServerUrl();
-    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
-    console.warn(`[PlaylistLoader] Strategy 3 audio-server: status=${res?.status}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.tracks?.length > 0) {
-        return data.tracks;
+    try {
+      const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`);
+      if (res?.ok) {
+        const data = await res.json();
+        const extracted = extractTracks(data?.items);
+        if (extracted.length > 0) return extracted;
       }
+    } catch {}
+
+    return [];
+  };
+
+  const fetchServer = async () => {
+    try {
+      const serverUrl = await getActiveAudioServerUrl();
+      const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.tracks?.length > 0) {
+          return data.tracks;
+        }
+      }
+    } catch {}
+    return [];
+  };
+
+  // Run direct and server strategies in parallel for fastest response time
+  const [directTracks, serverTracks] = await Promise.all([fetchDirect(), fetchServer()]);
+  const finalTracks = directTracks.length > 0 ? directTracks : serverTracks;
+
+  if (finalTracks.length > 0) {
+    if (playlistCache.size > 20) {
+      const firstKey = playlistCache.keys().next().value;
+      playlistCache.delete(firstKey);
     }
-  } catch (e) {
-    console.warn('[PlaylistLoader] Strategy 3 error:', e.message);
+    playlistCache.set(playlistId, finalTracks);
   }
 
-  console.warn(`[PlaylistLoader] All strategies exhausted for playlist ${playlistId}. Returning ${tracks.length} tracks.`);
-  return tracks;
+  return finalTracks;
 }
 
 export async function startPlayback(deviceId, uri) {

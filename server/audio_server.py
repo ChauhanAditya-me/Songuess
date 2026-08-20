@@ -40,6 +40,8 @@ app.add_middleware(
 session: Optional[Session] = None
 # Cache raw Vorbis stream bytes per track_id
 track_cache: dict[str, bytes] = {}
+# Cache loaded playlists for instant (1ms) repeat loads
+playlist_cache: dict[str, dict] = {}
 
 CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
 
@@ -77,16 +79,19 @@ def is_session_alive() -> bool:
         if not session.is_valid():
             session = None
             return False
-        # Check internal receiver thread if available
-        receiver = getattr(session, "receiver", None) or getattr(session, "_Session__receiver", None)
-        if receiver is not None and not receiver.is_alive():
-            logger.warning("Session packet receiver thread is dead. Resetting session.")
-            session = None
-            return False
+
+        # In librespot, check if receiver thread is running
+        receiver = getattr(session, "_Session__receiver", None) or getattr(session, "receiver", None)
+        if receiver is not None:
+            thread = getattr(receiver, "_Receiver__thread", None)
+            running = getattr(receiver, "_Receiver__running", True)
+            if (thread is not None and not thread.is_alive()) or running is False:
+                logger.warning("Session packet receiver thread is stopped. Resetting session.")
+                session = None
+                return False
         return True
     except Exception as e:
-        logger.warning(f"Session health check failed: {e}")
-        session = None
+        logger.warning(f"Session health check error: {e}")
         return False
 
 
@@ -430,7 +435,7 @@ def submit_oauth_code(payload: CodeSubmitPayload):
 @app.get("/public/playlist")
 @app.get("/api/public-playlist")
 def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL, URI, or ID")):
-    """Fetches Spotify playlist tracks in sub-second time (Fast Web API → Parallel Mercury → Embed)."""
+    """Fetches Spotify playlist tracks in sub-second time (Cache → Fast Web API → Parallel Mercury → Embed)."""
     import re
     import json
     import requests
@@ -443,6 +448,11 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
     else:
         playlist_id = clean_url.split("?")[0].split("/")[-1]
 
+    # 0. Instant Cache Check (1ms)
+    if playlist_id in playlist_cache:
+        logger.info(f"Returning cached playlist {playlist_id} ({playlist_cache[playlist_id]['total']} tracks)")
+        return playlist_cache[playlist_id]
+
     # 1. Primary Method (Fastest, ~150ms): Spotify Web API using server's minted token
     try:
         token_data = get_web_token()
@@ -451,7 +461,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
             api_res = requests.get(
                 f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=5,
+                timeout=4,
             )
             if api_res.status_code == 200:
                 tdata = api_res.json()
@@ -462,16 +472,20 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                         tracks.append(t)
                 if tracks:
                     logger.info(f"Fast-loaded {len(tracks)} tracks for playlist {playlist_id} via Web API")
-                    return {
+                    result = {
                         "id": playlist_id,
                         "name": "Spotify Playlist",
                         "tracks": tracks,
                         "total": len(tracks),
                     }
+                    if len(playlist_cache) > 50:
+                        del playlist_cache[next(iter(playlist_cache))]
+                    playlist_cache[playlist_id] = result
+                    return result
     except Exception as e:
         logger.debug(f"Web API fast playlist fetch failed: {e}")
 
-    # 2. Secondary Method (Parallel Mercury Protocol, ~500ms): Multi-threaded metadata fetch
+    # 2. Secondary Method (Parallel Mercury Protocol, ~300ms): Multi-threaded metadata fetch capped to 50
     try:
         sess = get_session()
         from librespot.metadata import PlaylistId as PlId
@@ -479,7 +493,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
         pl_data = sess.api().get_playlist(pl_id)
 
         if pl_data and pl_data.contents and pl_data.contents.items:
-            items_to_fetch = [item for item in pl_data.contents.items if item.uri and "track" in item.uri]
+            items_to_fetch = [item for item in pl_data.contents.items if item.uri and "track" in item.uri][:50]
 
             def fetch_single_track(item):
                 uri = item.uri
@@ -511,7 +525,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                     "album": {"name": "", "images": []},
                 }
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
                 tracks = list(executor.map(fetch_single_track, items_to_fetch))
 
             if tracks:
@@ -519,12 +533,16 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                 if pl_data.attributes and pl_data.attributes.name:
                     pl_name = pl_data.attributes.name
                 logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via parallel Mercury")
-                return {
+                result = {
                     "id": playlist_id,
                     "name": pl_name,
                     "tracks": tracks,
                     "total": len(tracks),
                 }
+                if len(playlist_cache) > 50:
+                    del playlist_cache[next(iter(playlist_cache))]
+                playlist_cache[playlist_id] = result
+                return result
     except Exception as e:
         logger.warning(f"Parallel Mercury playlist fetch failed: {e}")
         reset_session()
