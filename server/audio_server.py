@@ -61,56 +61,105 @@ def run_oauth_worker(oauth_handler: OAuth):
         current_oauth_handler = None
 
 
+session_lock = threading.Lock()
+
+
+def is_session_alive() -> bool:
+    """Checks if the Spotify session is connected and its background packet receiver is alive."""
+    global session
+    if session is None:
+        return False
+    try:
+        if not session.is_valid():
+            session = None
+            return False
+        # Check internal receiver thread if available
+        receiver = getattr(session, "receiver", None) or getattr(session, "_Session__receiver", None)
+        if receiver is not None and not receiver.is_alive():
+            logger.warning("Session packet receiver thread is dead. Resetting session.")
+            session = None
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Session health check failed: {e}")
+        session = None
+        return False
+
+
+def reset_session():
+    """Safely closes and resets the Spotify session and cached web tokens."""
+    global session, cached_web_token, cached_web_token_expires
+    logger.info("Resetting Spotify session...")
+    try:
+        if session:
+            session.close()
+    except Exception:
+        pass
+    session = None
+    cached_web_token = None
+    cached_web_token_expires = 0.0
+
+
 def get_session() -> Session:
     global session
-    if session is not None and session.is_valid():
+    if is_session_alive():
         return session
 
-    builder = Session.Builder()
-    builder.conf.stored_credentials_file = CREDENTIALS_FILE
-
-    # 0. Check SPOTIFY_CREDENTIALS env var (for cloud deployments like Render)
-    spotify_creds_env = os.getenv("SPOTIFY_CREDENTIALS")
-    if spotify_creds_env and not os.path.exists(CREDENTIALS_FILE):
-        try:
-            with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-                f.write(spotify_creds_env.strip())
-            logger.info("Wrote credentials.json from SPOTIFY_CREDENTIALS env variable!")
-        except Exception as e:
-            logger.warning(f"Failed to write SPOTIFY_CREDENTIALS: {e}")
-
-    # 1. Try saved credentials.json if available (with 3 retries for cloud networking)
-    if os.path.exists(CREDENTIALS_FILE):
-        import time
-        for attempt in range(1, 4):
-            try:
-                logger.info(f"Authenticating with saved credentials.json (attempt {attempt}/3)...")
-                session = builder.stored_file(CREDENTIALS_FILE).create()
-                logger.info("Spotify session created from credentials.json!")
-                return session
-            except Exception as e:
-                logger.warning(f"Attempt {attempt} failed to restore session: {e}")
-                if attempt < 3:
-                    time.sleep(1.5)
-
-    # 2. Try username/password from .env
-    if SPOTIFY_USERNAME and SPOTIFY_PASSWORD:
-        logger.info(f"Authenticating with Spotify as '{SPOTIFY_USERNAME}'...")
-        try:
-            session = builder.user_pass(SPOTIFY_USERNAME, SPOTIFY_PASSWORD).create()
-            logger.info("Spotify session created successfully from credentials!")
+    with session_lock:
+        # Double-check inside lock
+        if is_session_alive():
             return session
-        except Exception as e:
-            logger.error(f"Failed to authenticate Spotify session: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Spotify auth failed: {e}",
-            )
 
-    raise HTTPException(
-        status_code=500,
-        detail="Spotify is not authenticated. Please run 'npm run login' or add SPOTIFY_USERNAME and SPOTIFY_PASSWORD to .env",
-    )
+        session = None
+        builder = Session.Builder()
+        builder.conf.stored_credentials_file = CREDENTIALS_FILE
+
+        # 0. Check SPOTIFY_CREDENTIALS env var (for cloud deployments like Render)
+        spotify_creds_env = os.getenv("SPOTIFY_CREDENTIALS")
+        if spotify_creds_env and not os.path.exists(CREDENTIALS_FILE):
+            try:
+                with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+                    f.write(spotify_creds_env.strip())
+                logger.info("Wrote credentials.json from SPOTIFY_CREDENTIALS env variable!")
+            except Exception as e:
+                logger.warning(f"Failed to write SPOTIFY_CREDENTIALS: {e}")
+
+        # 1. Try saved credentials.json if available (with 3 retries for cloud networking)
+        if os.path.exists(CREDENTIALS_FILE):
+            import time
+            for attempt in range(1, 4):
+                try:
+                    logger.info(f"Authenticating with saved credentials.json (attempt {attempt}/3)...")
+                    new_session = builder.stored_file(CREDENTIALS_FILE).create()
+                    if new_session and new_session.is_valid():
+                        session = new_session
+                        logger.info("Spotify session created from credentials.json!")
+                        return session
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt} failed to restore session: {e}")
+                    if attempt < 3:
+                        time.sleep(1.0)
+
+        # 2. Try username/password from .env
+        if SPOTIFY_USERNAME and SPOTIFY_PASSWORD:
+            logger.info(f"Authenticating with Spotify as '{SPOTIFY_USERNAME}'...")
+            try:
+                new_session = builder.user_pass(SPOTIFY_USERNAME, SPOTIFY_PASSWORD).create()
+                if new_session and new_session.is_valid():
+                    session = new_session
+                    logger.info("Spotify session created successfully from credentials!")
+                    return session
+            except Exception as e:
+                logger.error(f"Failed to authenticate Spotify session: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Spotify auth failed: {e}",
+                )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Spotify is not authenticated. Please run 'npm run login' or add SPOTIFY_USERNAME and SPOTIFY_PASSWORD to .env",
+        )
 
 
 @app.on_event("startup")
@@ -120,8 +169,6 @@ def startup_event():
     except Exception as e:
         logger.info(f"Startup session check: {e}")
 
-
-import threading
 
 fetch_lock = threading.Lock()
 
@@ -155,8 +202,7 @@ def get_track_bytes(raw_track_id: str) -> bytes:
                     break
             except Exception as e:
                 logger.warning(f"Attempt {attempt} failed to load stream: {e}. Reconnecting session...")
-                global session
-                session = None
+                reset_session()
 
         if not stream or not stream.input_stream:
             raise HTTPException(status_code=404, detail="Track audio stream could not be loaded")
@@ -223,8 +269,8 @@ def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0
 
 @app.get("/")
 def root():
-    has_creds = bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD)
-    authenticated = session is not None and session.is_valid()
+    has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD) or bool(os.getenv("SPOTIFY_CREDENTIALS"))
+    authenticated = is_session_alive()
     return {
         "service": "Songuess Audio Server",
         "status": "online",
@@ -266,6 +312,7 @@ def get_web_token():
         return cached_web_token
     except Exception as e:
         logger.error(f"Failed to mint Web API token: {e}")
+        reset_session()
         if cached_web_token:
             return cached_web_token
         raise HTTPException(status_code=500, detail=str(e))
@@ -273,34 +320,34 @@ def get_web_token():
 
 @app.get("/health")
 def health_check():
-    global session
     has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD) or bool(os.getenv("SPOTIFY_CREDENTIALS"))
-    if (session is None or not session.is_valid()) and has_creds:
+    alive = is_session_alive()
+    if not alive and has_creds:
         try:
             get_session()
+            alive = is_session_alive()
         except Exception:
             pass
-    authenticated = session is not None and session.is_valid()
     return {
         "status": "ok",
         "has_credentials": has_creds,
-        "authenticated": authenticated,
+        "authenticated": alive,
         "cached_tracks": len(track_cache),
     }
 
 
 @app.get("/auth/status")
 def auth_status():
-    global session
     has_creds = os.path.exists(CREDENTIALS_FILE) or bool(SPOTIFY_USERNAME and SPOTIFY_PASSWORD) or bool(os.getenv("SPOTIFY_CREDENTIALS"))
-    if (session is None or not session.is_valid()) and has_creds:
+    alive = is_session_alive()
+    if not alive and has_creds:
         try:
             get_session()
+            alive = is_session_alive()
         except Exception:
             pass
-    authenticated = session is not None and session.is_valid()
     return {
-        "authenticated": authenticated,
+        "authenticated": alive,
         "has_credentials": has_creds,
     }
 
@@ -309,7 +356,7 @@ def auth_status():
 def get_login_url():
     global session, current_oauth_handler
 
-    if session is not None and session.is_valid():
+    if is_session_alive():
         return {"authenticated": True, "auth_url": None}
 
     with oauth_lock:
@@ -421,8 +468,6 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                         album_images = []
                         if track_meta.album:
                             album_name = track_meta.album.name or ""
-                            # Mercury doesn't expose cover URLs directly,
-                            # but the frontend only needs name/uri/artists for the game.
 
                         tracks.append({
                             "id": track_id_hex,
@@ -434,7 +479,6 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                         })
                 except Exception as te:
                     logger.debug(f"Skipping track {uri}: {te}")
-                    # Still add minimal info so it's playable
                     tracks.append({
                         "id": track_id_hex,
                         "name": f"Track {track_id_hex[:8]}",
@@ -456,6 +500,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                 }
     except Exception as e:
         logger.warning(f"Mercury playlist fetch failed: {e}")
+        reset_session()
 
     # 2. Fallback: Spotify Web API using server's Librespot token
     try:
