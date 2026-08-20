@@ -70,56 +70,82 @@ export async function getLikedTracks() {
   return tracks;
 }
 
+/**
+ * Helper: raw authenticated fetch that does NOT throw on non-2xx.
+ * Returns the Response object so callers can inspect .status / .ok.
+ */
+async function rawSpotifyFetch(url) {
+  const token = await getValidAccessToken();
+  if (!token) return null;
+  try {
+    return await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return null;
+  }
+}
+
+function extractTracks(items) {
+  const tracks = [];
+  for (const item of items || []) {
+    const t = item.track || item.item || item;
+    if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
+      tracks.push(t);
+    }
+  }
+  return tracks;
+}
+
 export async function getPlaylistTracks(playlistId) {
   if (playlistId === '__liked__') {
     return getLikedTracks();
   }
 
-  const tracks = [];
+  let tracks = [];
 
-  // 1. First attempt: Direct Spotify Web API playlist endpoint
+  // --- Strategy 1: GET /v1/playlists/{id} (full playlist object) ---
   try {
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}`;
-    const initialRes = await spotifyFetch(url);
-    if (initialRes.ok) {
-      const playlistData = await initialRes.json();
-      const trackObj = playlistData.tracks;
-      if (trackObj?.items) {
-        for (const item of trackObj.items) {
-          const t = item.track || item.item || item;
-          if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
-            tracks.push(t);
-          }
-        }
+    const res = await rawSpotifyFetch(
+      `https://api.spotify.com/v1/playlists/${playlistId}?market=from_token`
+    );
+    if (res?.ok) {
+      const data = await res.json();
+      tracks = extractTracks(data?.tracks?.items);
 
-        let nextUrl = trackObj.next;
-        let pages = 1;
-        while (nextUrl && pages < 5) {
-          try {
-            const pageRes = await spotifyFetch(nextUrl);
-            if (!pageRes.ok) break;
-            const pageData = await pageRes.json();
-            for (const item of pageData.items || []) {
-              const t = item.track || item.item || item;
-              if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
-                tracks.push(t);
-              }
-            }
-            nextUrl = pageData.next;
-            pages++;
-          } catch {
-            break;
-          }
-        }
+      let nextUrl = data?.tracks?.next;
+      let pages = 1;
+      while (nextUrl && pages < 5) {
+        const pageRes = await rawSpotifyFetch(nextUrl);
+        if (!pageRes?.ok) break;
+        const pageData = await pageRes.json();
+        tracks.push(...extractTracks(pageData.items));
+        nextUrl = pageData.next;
+        pages++;
       }
     }
   } catch {}
 
-  if (tracks.length > 0) {
-    return tracks;
-  }
+  if (tracks.length > 0) return tracks;
 
-  // 2. Second attempt: Render backend loader with Librespot token
+  // --- Strategy 2: GET /v1/playlists/{id}/tracks (tracks sub-endpoint) ---
+  try {
+    let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50&market=from_token`;
+    let pages = 0;
+
+    while (nextUrl && pages < 5) {
+      const pageRes = await rawSpotifyFetch(nextUrl);
+      if (!pageRes?.ok) break;
+      const pageData = await pageRes.json();
+      tracks.push(...extractTracks(pageData.items));
+      nextUrl = pageData.next;
+      pages++;
+    }
+  } catch {}
+
+  if (tracks.length > 0) return tracks;
+
+  // --- Strategy 3: Render backend loader with Librespot token ---
   try {
     const serverUrl = await getActiveAudioServerUrl();
     const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
