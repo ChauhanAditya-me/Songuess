@@ -379,7 +379,7 @@ def submit_oauth_code(payload: CodeSubmitPayload):
 @app.get("/public/playlist")
 @app.get("/api/public-playlist")
 def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL, URI, or ID")):
-    """Fetches Spotify playlist tracks using server Librespot token with HTML embed fallback."""
+    """Fetches Spotify playlist tracks using server Librespot session (Mercury → Web API → Embed)."""
     import re
     import json
     import requests
@@ -391,7 +391,73 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
     else:
         playlist_id = clean_url.split("?")[0].split("/")[-1]
 
-    # 1. Primary Method: Fetch directly from Spotify Web API using server's Librespot access token
+    # 1. Primary Method: Mercury protocol (bypasses Web API restrictions entirely)
+    try:
+        sess = get_session()
+        from librespot.metadata import PlaylistId as PlId
+        pl_id = PlId(playlist_id)
+        pl_data = sess.api().get_playlist(pl_id)
+
+        if pl_data and pl_data.contents and pl_data.contents.items:
+            tracks = []
+            for item in pl_data.contents.items:
+                uri = item.uri
+                if not uri or "track" not in uri:
+                    continue
+
+                track_id_hex = uri.replace("spotify:track:", "")
+                # Fetch full metadata for each track via Mercury
+                try:
+                    track_meta = sess.api().get_metadata_4_track(
+                        TrackId.from_base62(track_id_hex)
+                    )
+                    if track_meta and track_meta.name:
+                        artists = []
+                        for a in track_meta.artist:
+                            if a.name:
+                                artists.append({"name": a.name})
+
+                        album_name = ""
+                        album_images = []
+                        if track_meta.album:
+                            album_name = track_meta.album.name or ""
+                            # Mercury doesn't expose cover URLs directly,
+                            # but the frontend only needs name/uri/artists for the game.
+
+                        tracks.append({
+                            "id": track_id_hex,
+                            "name": track_meta.name,
+                            "uri": uri,
+                            "artists": artists or [{"name": "Unknown Artist"}],
+                            "duration_ms": track_meta.duration or 0,
+                            "album": {"name": album_name, "images": album_images},
+                        })
+                except Exception as te:
+                    logger.debug(f"Skipping track {uri}: {te}")
+                    # Still add minimal info so it's playable
+                    tracks.append({
+                        "id": track_id_hex,
+                        "name": f"Track {track_id_hex[:8]}",
+                        "uri": uri,
+                        "artists": [{"name": "Unknown Artist"}],
+                        "duration_ms": 0,
+                    })
+
+            if tracks:
+                pl_name = "Spotify Playlist"
+                if pl_data.attributes and pl_data.attributes.name:
+                    pl_name = pl_data.attributes.name
+                logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via Mercury protocol")
+                return {
+                    "id": playlist_id,
+                    "name": pl_name,
+                    "tracks": tracks,
+                    "total": len(tracks),
+                }
+    except Exception as e:
+        logger.warning(f"Mercury playlist fetch failed: {e}")
+
+    # 2. Fallback: Spotify Web API using server's Librespot token
     try:
         token_data = get_web_token()
         token = token_data.get("access_token")
@@ -443,7 +509,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
     except Exception as e:
         logger.warning(f"Failed to fetch playlist via server token: {e}")
 
-    # 2. Secondary Method: Spotify Embed HTML scraper fallback
+    # 3. Last resort: Spotify Embed HTML scraper fallback
     embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
     try:
         resp = requests.get(
