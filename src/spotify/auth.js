@@ -4,6 +4,11 @@ const REDIRECT_URI =
     ? 'http://127.0.0.1:5173/callback'
     : `${window.location.origin}/callback`;
 
+// Bump this whenever the OAuth scopes in beginSpotifyLogin() change.
+// Existing sessions with an older version will be invalidated on next load,
+// forcing the user to re-authorize with the new permissions.
+const SCOPE_VERSION = 2;
+
 let refreshPromise = null;
 
 export function getAccessToken() {
@@ -31,12 +36,25 @@ export function clearAuthData() {
   localStorage.removeItem('spotify_access_token');
   localStorage.removeItem('spotify_refresh_token');
   localStorage.removeItem('spotify_token_expires');
+  localStorage.removeItem('spotify_scope_version');
   localStorage.removeItem('code_verifier');
   sessionStorage.removeItem('code_verifier');
 }
 
 export function isAuthenticated() {
-  return Boolean(getAccessToken() || getRefreshToken());
+  const hasTokens = Boolean(getAccessToken() || getRefreshToken());
+  if (!hasTokens) return false;
+
+  // If the stored scope version doesn't match, the session was created
+  // with outdated OAuth scopes. Wipe it so the user re-authorizes.
+  const storedVersion = Number(localStorage.getItem('spotify_scope_version') || '0');
+  if (storedVersion < SCOPE_VERSION) {
+    console.warn(`Spotify scope version outdated (stored=${storedVersion}, required=${SCOPE_VERSION}). Clearing session.`);
+    clearAuthData();
+    return false;
+  }
+
+  return true;
 }
 
 export async function refreshAccessToken() {
@@ -172,6 +190,7 @@ export async function exchangeCode(code) {
   localStorage.setItem('spotify_access_token', data.access_token);
   if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token);
   localStorage.setItem('spotify_token_expires', String(Date.now() + data.expires_in * 1000));
+  localStorage.setItem('spotify_scope_version', String(SCOPE_VERSION));
   sessionStorage.removeItem('code_verifier');
   localStorage.removeItem('code_verifier');
   return data.access_token;
