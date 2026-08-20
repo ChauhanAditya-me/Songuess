@@ -379,45 +379,93 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   });
 }
 
+function killAudioElement(audio) {
+  if (!audio) return;
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    audio.removeAttribute('src');
+    audio.src = '';
+    audio.load();
+  } catch {}
+}
+
+let currentFullTrackId = 0;
+let activeFullAudio = null;
+let activeFullAudioSource = null;
+
 /*
  * Plays the full song audio on the Result (Win / Lost) screens.
  * Starts INSTANTLY (0ms) using the in-memory RAM snippet, then seamlessly continues full MP3 playback!
  */
 export async function playFullTrack(uri) {
-  stopPlayback();
+  await stopPlayback();
+  const thisTrackId = ++currentFullTrackId;
 
   const ctx = getAudioContext();
   const cachedBuffer = audioBufferCache.get(uri);
 
   // 1. Play instantly from RAM (0ms latency!)
-  if (ctx && cachedBuffer) {
-    const source = ctx.createBufferSource();
-    source.buffer = cachedBuffer;
-    source.connect(ctx.destination);
-    currentSourceNode = source;
-    source.start(0, 0);
+  if (ctx && cachedBuffer && thisTrackId === currentFullTrackId) {
+    try {
+      const source = ctx.createBufferSource();
+      source.buffer = cachedBuffer;
+      source.connect(ctx.destination);
+      activeFullAudioSource = source;
+      source.start(0, 0);
+    } catch {}
   }
 
   // 2. Concurrently load full track MP3 stream
   try {
     const serverUrl = await getActiveAudioServerUrl();
+    if (thisTrackId !== currentFullTrackId) {
+      if (activeFullAudioSource) {
+        try {
+          activeFullAudioSource.stop();
+          activeFullAudioSource.disconnect();
+        } catch {}
+        activeFullAudioSource = null;
+      }
+      return;
+    }
+
     const audioUrl = `${serverUrl}/audio/full?uri=${encodeURIComponent(uri)}`;
-    const audio = new Audio(audioUrl);
-    currentHtmlAudio = audio;
+    const audio = new Audio();
+    activeFullAudio = audio;
     audio.volume = 0.85;
 
     audio.onplaying = () => {
+      if (thisTrackId !== currentFullTrackId) {
+        killAudioElement(audio);
+        if (activeFullAudio === audio) activeFullAudio = null;
+        return;
+      }
+
       // Once the full stream is playing, smoothly disconnect the temporary RAM snippet node
-      if (currentSourceNode) {
+      if (activeFullAudioSource) {
         try {
-          currentSourceNode.stop();
-          currentSourceNode.disconnect();
+          activeFullAudioSource.stop();
+          activeFullAudioSource.disconnect();
         } catch {}
-        currentSourceNode = null;
+        activeFullAudioSource = null;
       }
     };
 
-    audio.play().catch(() => {});
+    audio.src = audioUrl;
+
+    if (thisTrackId !== currentFullTrackId) {
+      killAudioElement(audio);
+      if (activeFullAudio === audio) activeFullAudio = null;
+      return;
+    }
+
+    await audio.play().catch(() => {});
+
+    if (thisTrackId !== currentFullTrackId) {
+      killAudioElement(audio);
+      if (activeFullAudio === audio) activeFullAudio = null;
+    }
   } catch {}
 }
 
@@ -427,10 +475,19 @@ export async function replaySnippet(uri, seconds, isCurrent = () => true) {
 
 export async function stopPlayback() {
   ++operationId;
+  ++currentFullTrackId; // Invalidate any in-flight full track streaming
 
   if (currentPlaybackTimeout) {
     clearTimeout(currentPlaybackTimeout);
     currentPlaybackTimeout = null;
+  }
+
+  if (activeFullAudioSource) {
+    try {
+      activeFullAudioSource.stop();
+      activeFullAudioSource.disconnect();
+    } catch {}
+    activeFullAudioSource = null;
   }
 
   if (currentSourceNode) {
@@ -441,13 +498,22 @@ export async function stopPlayback() {
     currentSourceNode = null;
   }
 
-  // Stop HTML5 audio if active
+  // Hard kill any full track HTML5 audio
+  if (activeFullAudio) {
+    killAudioElement(activeFullAudio);
+    activeFullAudio = null;
+  }
+
+  // Hard kill any regular snippet HTML5 audio
   if (currentHtmlAudio) {
+    killAudioElement(currentHtmlAudio);
+    currentHtmlAudio = null;
+  }
+
+  const player = getCurrentPlayer();
+  if (player) {
     try {
-      currentHtmlAudio.pause();
-      currentHtmlAudio.currentTime = 0;
-      currentHtmlAudio.src = '';
-      currentHtmlAudio = null;
+      player.pause().catch(() => {});
     } catch {}
   }
 }

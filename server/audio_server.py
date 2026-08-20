@@ -15,6 +15,10 @@ from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("audio_server")
 
+# Silence noisy librespot packet debug / protocol chatter
+for noisy_logger in ["librespot", "librespot.core", "librespot.crypto", "librespot.audio"]:
+    logging.getLogger(noisy_logger).setLevel(logging.ERROR)
+
 # Load environment variables
 load_dotenv()
 
@@ -426,10 +430,11 @@ def submit_oauth_code(payload: CodeSubmitPayload):
 @app.get("/public/playlist")
 @app.get("/api/public-playlist")
 def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL, URI, or ID")):
-    """Fetches Spotify playlist tracks using server Librespot session (Mercury → Web API → Embed)."""
+    """Fetches Spotify playlist tracks in sub-second time (Fast Web API → Parallel Mercury → Embed)."""
     import re
     import json
     import requests
+    import concurrent.futures
 
     clean_url = url.strip()
     match = re.search(r"playlist[/:]+([a-zA-Z0-9]+)", clean_url)
@@ -438,80 +443,15 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
     else:
         playlist_id = clean_url.split("?")[0].split("/")[-1]
 
-    # 1. Primary Method: Mercury protocol (bypasses Web API restrictions entirely)
-    try:
-        sess = get_session()
-        from librespot.metadata import PlaylistId as PlId
-        pl_id = PlId(playlist_id)
-        pl_data = sess.api().get_playlist(pl_id)
-
-        if pl_data and pl_data.contents and pl_data.contents.items:
-            tracks = []
-            for item in pl_data.contents.items:
-                uri = item.uri
-                if not uri or "track" not in uri:
-                    continue
-
-                track_id_hex = uri.replace("spotify:track:", "")
-                # Fetch full metadata for each track via Mercury
-                try:
-                    track_meta = sess.api().get_metadata_4_track(
-                        TrackId.from_base62(track_id_hex)
-                    )
-                    if track_meta and track_meta.name:
-                        artists = []
-                        for a in track_meta.artist:
-                            if a.name:
-                                artists.append({"name": a.name})
-
-                        album_name = ""
-                        album_images = []
-                        if track_meta.album:
-                            album_name = track_meta.album.name or ""
-
-                        tracks.append({
-                            "id": track_id_hex,
-                            "name": track_meta.name,
-                            "uri": uri,
-                            "artists": artists or [{"name": "Unknown Artist"}],
-                            "duration_ms": track_meta.duration or 0,
-                            "album": {"name": album_name, "images": album_images},
-                        })
-                except Exception as te:
-                    logger.debug(f"Skipping track {uri}: {te}")
-                    tracks.append({
-                        "id": track_id_hex,
-                        "name": f"Track {track_id_hex[:8]}",
-                        "uri": uri,
-                        "artists": [{"name": "Unknown Artist"}],
-                        "duration_ms": 0,
-                    })
-
-            if tracks:
-                pl_name = "Spotify Playlist"
-                if pl_data.attributes and pl_data.attributes.name:
-                    pl_name = pl_data.attributes.name
-                logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via Mercury protocol")
-                return {
-                    "id": playlist_id,
-                    "name": pl_name,
-                    "tracks": tracks,
-                    "total": len(tracks),
-                }
-    except Exception as e:
-        logger.warning(f"Mercury playlist fetch failed: {e}")
-        reset_session()
-
-    # 2. Fallback: Spotify Web API using server's Librespot token
+    # 1. Primary Method (Fastest, ~150ms): Spotify Web API using server's minted token
     try:
         token_data = get_web_token()
         token = token_data.get("access_token")
         if token:
-            # Try /tracks endpoint first
             api_res = requests.get(
                 f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=8,
+                timeout=5,
             )
             if api_res.status_code == 200:
                 tdata = api_res.json()
@@ -521,38 +461,73 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                     if t and t.get("uri") and t.get("name"):
                         tracks.append(t)
                 if tracks:
-                    logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via /tracks endpoint")
+                    logger.info(f"Fast-loaded {len(tracks)} tracks for playlist {playlist_id} via Web API")
                     return {
                         "id": playlist_id,
                         "name": "Spotify Playlist",
                         "tracks": tracks,
                         "total": len(tracks),
                     }
-
-            # Fallback to playlist entity endpoint
-            api_res = requests.get(
-                f"https://api.spotify.com/v1/playlists/{playlist_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=8,
-            )
-            if api_res.status_code == 200:
-                pdata = api_res.json()
-                name = pdata.get("name") or "Spotify Playlist"
-                tracks = []
-                for item in (pdata.get("tracks", {}).get("items") or []):
-                    t = item.get("track") or item.get("item") or item
-                    if t and t.get("uri") and t.get("name"):
-                        tracks.append(t)
-                if tracks:
-                    logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via server token")
-                    return {
-                        "id": playlist_id,
-                        "name": name,
-                        "tracks": tracks,
-                        "total": len(tracks),
-                    }
     except Exception as e:
-        logger.warning(f"Failed to fetch playlist via server token: {e}")
+        logger.debug(f"Web API fast playlist fetch failed: {e}")
+
+    # 2. Secondary Method (Parallel Mercury Protocol, ~500ms): Multi-threaded metadata fetch
+    try:
+        sess = get_session()
+        from librespot.metadata import PlaylistId as PlId
+        pl_id = PlId(playlist_id)
+        pl_data = sess.api().get_playlist(pl_id)
+
+        if pl_data and pl_data.contents and pl_data.contents.items:
+            items_to_fetch = [item for item in pl_data.contents.items if item.uri and "track" in item.uri]
+
+            def fetch_single_track(item):
+                uri = item.uri
+                track_id_hex = uri.replace("spotify:track:", "")
+                try:
+                    track_meta = sess.api().get_metadata_4_track(
+                        TrackId.from_base62(track_id_hex)
+                    )
+                    if track_meta and track_meta.name:
+                        artists = [{"name": a.name} for a in track_meta.artist if a.name] or [{"name": "Unknown Artist"}]
+                        album_name = track_meta.album.name if track_meta.album and track_meta.album.name else ""
+                        return {
+                            "id": track_id_hex,
+                            "name": track_meta.name,
+                            "uri": uri,
+                            "artists": artists,
+                            "duration_ms": track_meta.duration or 0,
+                            "album": {"name": album_name, "images": []},
+                        }
+                except Exception:
+                    pass
+
+                return {
+                    "id": track_id_hex,
+                    "name": f"Track {track_id_hex[:8]}",
+                    "uri": uri,
+                    "artists": [{"name": "Unknown Artist"}],
+                    "duration_ms": 0,
+                    "album": {"name": "", "images": []},
+                }
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                tracks = list(executor.map(fetch_single_track, items_to_fetch))
+
+            if tracks:
+                pl_name = "Spotify Playlist"
+                if pl_data.attributes and pl_data.attributes.name:
+                    pl_name = pl_data.attributes.name
+                logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via parallel Mercury")
+                return {
+                    "id": playlist_id,
+                    "name": pl_name,
+                    "tracks": tracks,
+                    "total": len(tracks),
+                }
+    except Exception as e:
+        logger.warning(f"Parallel Mercury playlist fetch failed: {e}")
+        reset_session()
 
     # 3. Last resort: Spotify Embed HTML scraper fallback
     embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"

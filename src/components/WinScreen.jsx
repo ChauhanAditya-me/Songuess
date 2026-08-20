@@ -69,7 +69,13 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
             GUESSED IN {guessedSeconds}S!
           </div>
 
-          <button className="btn-next-song" onClick={onNext}>
+          <button
+            className="btn-next-song"
+            onClick={() => {
+              stopPlayback();
+              onNext();
+            }}
+          >
             <span>Next Song</span>
             <span>▶</span>
           </button>

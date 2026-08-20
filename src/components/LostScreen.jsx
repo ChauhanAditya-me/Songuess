@@ -43,7 +43,13 @@ export default function LostScreen({ track, onNext, onBackToPlaylists }) {
             LOST!
           </div>
 
-          <button className="btn-next-song btn-lost-next" onClick={onNext}>
+          <button
+            className="btn-next-song btn-lost-next"
+            onClick={() => {
+              stopPlayback();
+              onNext();
+            }}
+          >
             <span>Next Song</span>
             <span>▶</span>
           </button>
