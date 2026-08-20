@@ -1,4 +1,5 @@
 import { getAccessToken } from './auth';
+import { getActiveAudioServerUrl } from './playback';
 
 export async function spotifyFetch(url, options = {}) {
   const token = getAccessToken();
@@ -30,15 +31,25 @@ export async function getLikedTracks() {
   let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
   let pages = 0;
 
-  while (url && pages < 3) {
-    const data = await (await spotifyFetch(url)).json();
-    tracks.push(
-      ...(data.items || [])
-        .map(item => item.track)
-        .filter(item => item?.type === 'track' && item.uri)
-    );
-    url = data.next;
-    pages++;
+  while (url && pages < 4) {
+    try {
+      const res = await spotifyFetch(url);
+      if (!res.ok) break;
+      const data = await res.json();
+      const items = data.items || [];
+
+      for (const item of items) {
+        const t = item.track;
+        if (t && t.uri && t.name) {
+          tracks.push(t);
+        }
+      }
+
+      url = data.next;
+      pages++;
+    } catch {
+      break;
+    }
   }
 
   return tracks;
@@ -50,21 +61,60 @@ export async function getPlaylistTracks(playlistId) {
   }
 
   const tracks = [];
-  let url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`;
-  let pages = 0;
 
-  while (url && pages < 4) {
-    const data = await (await spotifyFetch(url)).json();
+  // 1. First attempt: Direct Spotify Web API playlist endpoint
+  try {
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}`;
+    const initialRes = await spotifyFetch(url);
+    if (initialRes.ok) {
+      const playlistData = await initialRes.json();
+      const trackObj = playlistData.tracks;
+      if (trackObj?.items) {
+        for (const item of trackObj.items) {
+          const t = item.track || item.item || item;
+          if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
+            tracks.push(t);
+          }
+        }
 
-    tracks.push(
-      ...(data.items || [])
-        .map(item => item.item || item.track)
-        .filter(item => item?.type === 'track' && item.uri)
-    );
+        let nextUrl = trackObj.next;
+        let pages = 1;
+        while (nextUrl && pages < 5) {
+          try {
+            const pageRes = await spotifyFetch(nextUrl);
+            if (!pageRes.ok) break;
+            const pageData = await pageRes.json();
+            for (const item of pageData.items || []) {
+              const t = item.track || item.item || item;
+              if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
+                tracks.push(t);
+              }
+            }
+            nextUrl = pageData.next;
+            pages++;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  } catch {}
 
-    url = data.next;
-    pages++;
+  if (tracks.length > 0) {
+    return tracks;
   }
+
+  // 2. Second attempt: Render backend loader with Librespot token
+  try {
+    const serverUrl = await getActiveAudioServerUrl();
+    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.tracks?.length > 0) {
+        return data.tracks;
+      }
+    }
+  } catch {}
 
   return tracks;
 }
