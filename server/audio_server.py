@@ -520,13 +520,25 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                     if track_meta and track_meta.name:
                         artists = [{"name": a.name} for a in track_meta.artist if a.name] or [{"name": "Unknown Artist"}]
                         album_name = track_meta.album.name if track_meta.album and track_meta.album.name else ""
+                        images = []
+                        if track_meta.album:
+                            cover_grp = getattr(track_meta.album, "cover_group", None)
+                            if cover_grp and getattr(cover_grp, "image", None):
+                                for img in cover_grp.image:
+                                    if getattr(img, "file_id", None):
+                                        images.append({"url": f"https://i.scdn.co/image/{img.file_id.hex()}"})
+                            elif getattr(track_meta.album, "cover", None):
+                                for cov in track_meta.album.cover:
+                                    if getattr(cov, "file_id", None):
+                                        images.append({"url": f"https://i.scdn.co/image/{cov.file_id.hex()}"})
+
                         return {
                             "id": track_id_hex,
                             "name": track_meta.name,
                             "uri": uri,
                             "artists": artists,
                             "duration_ms": track_meta.duration or 0,
-                            "album": {"name": album_name, "images": []},
+                            "album": {"name": album_name, "images": images},
                         }
                 except Exception:
                     pass

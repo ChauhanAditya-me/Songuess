@@ -15,7 +15,10 @@ export default function LostScreen({ track, onNext, onBackToPlaylists }) {
   const coverUrl =
     track?.album?.images?.[0]?.url ||
     track?.album?.images?.[1]?.url ||
-    'https://placehold.co/300x300/181818/ffffff?text=🎵';
+    track?.album?.images?.[2]?.url ||
+    track?.image_url ||
+    track?.cover_url ||
+    'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80';
 
   const artistsText = track?.artists?.map(a => a.name).join(', ') || '';
   const albumName = track?.album?.name || '';
