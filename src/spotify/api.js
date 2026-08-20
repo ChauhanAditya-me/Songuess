@@ -71,66 +71,23 @@ export async function getLikedTracks() {
 }
 
 export async function getPlaylistTracks(playlistId) {
-  if (!playlistId) return [];
-
   if (playlistId === '__liked__') {
     return getLikedTracks();
   }
 
-  const cleanId = String(playlistId)
-    .trim()
-    .replace(/^spotify:playlist:/, '')
-    .split('?')[0]
-    .split('/')
-    .pop();
-
   const tracks = [];
 
-  // 1. First attempt: Direct Spotify Web API playlist tracks endpoint
+  // 1. First attempt: Direct Spotify Web API playlist endpoint
   try {
-    let nextUrl = `https://api.spotify.com/v1/playlists/${cleanId}/tracks?limit=50&additional_types=track`;
-    let pages = 0;
-
-    while (nextUrl && pages < 5) {
-      try {
-        const pageRes = await spotifyFetch(nextUrl);
-        if (!pageRes.ok) break;
-        const pageData = await pageRes.json();
-        const items = pageData.items || [];
-
-        for (const item of items) {
-          const t = item?.track || item?.item;
-          if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
-            tracks.push(t);
-          }
-        }
-
-        nextUrl = pageData.next;
-        pages++;
-      } catch (err) {
-        console.warn(`Failed to fetch page ${pages} for playlist ${cleanId}:`, err);
-        break;
-      }
-    }
-  } catch (err) {
-    console.warn(`Primary tracks fetch failed for playlist ${cleanId}:`, err);
-  }
-
-  if (tracks.length > 0) {
-    return tracks;
-  }
-
-  // 2. Second attempt: Spotify Web API playlist entity endpoint (/v1/playlists/{id})
-  try {
-    const url = `https://api.spotify.com/v1/playlists/${cleanId}`;
+    const url = `https://api.spotify.com/v1/playlists/${playlistId}`;
     const initialRes = await spotifyFetch(url);
     if (initialRes.ok) {
       const playlistData = await initialRes.json();
       const trackObj = playlistData.tracks;
       if (trackObj?.items) {
         for (const item of trackObj.items) {
-          const t = item?.track || item?.item;
-          if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
+          const t = item.track || item.item || item;
+          if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
             tracks.push(t);
           }
         }
@@ -143,8 +100,8 @@ export async function getPlaylistTracks(playlistId) {
             if (!pageRes.ok) break;
             const pageData = await pageRes.json();
             for (const item of pageData.items || []) {
-              const t = item?.track || item?.item;
-              if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
+              const t = item.track || item.item || item;
+              if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
                 tracks.push(t);
               }
             }
@@ -156,27 +113,23 @@ export async function getPlaylistTracks(playlistId) {
         }
       }
     }
-  } catch (err) {
-    console.warn(`Secondary playlist fetch failed for playlist ${cleanId}:`, err);
-  }
+  } catch {}
 
   if (tracks.length > 0) {
     return tracks;
   }
 
-  // 3. Third attempt: Render backend loader with Librespot token
+  // 2. Second attempt: Render backend loader with Librespot token
   try {
     const serverUrl = await getActiveAudioServerUrl();
-    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(cleanId)}`);
+    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
     if (res.ok) {
       const data = await res.json();
       if (data?.tracks?.length > 0) {
         return data.tracks;
       }
     }
-  } catch (err) {
-    console.warn(`Backend audio server playlist loader failed:`, err);
-  }
+  } catch {}
 
   return tracks;
 }
