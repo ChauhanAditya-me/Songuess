@@ -232,16 +232,57 @@ export async function ensurePlayer() {
   return result;
 }
 
+// Web Audio API In-Memory Cache for 0ms Replays and Skips
+let audioCtx = null;
+const audioBufferCache = new Map();
+let currentSourceNode = null;
+let currentPlaybackTimeout = null;
+
+function getAudioContext() {
+  if (!audioCtx && typeof window !== 'undefined') {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      audioCtx = new AudioContextClass();
+    }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+export async function fetchAndCacheTrackAudio(uri) {
+  if (audioBufferCache.has(uri)) {
+    return audioBufferCache.get(uri);
+  }
+
+  const serverUrl = await getActiveAudioServerUrl();
+  console.log(`[Songuess] ⚡ Caching track audio into browser memory: ${uri}`);
+  const res = await fetch(`${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=15`);
+  if (!res.ok) {
+    throw new Error('Failed to load audio snippet from server');
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  const ctx = getAudioContext();
+  if (ctx) {
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    if (audioBufferCache.size > 15) {
+      const firstKey = audioBufferCache.keys().next().value;
+      audioBufferCache.delete(firstKey);
+    }
+    audioBufferCache.set(uri, audioBuffer);
+    return audioBuffer;
+  }
+  return null;
+}
+
 /*
- * Prepares a track and caches it into memory.
+ * Prepares a track and caches it into browser RAM in background.
  */
 export async function preloadTrack(uri) {
   try {
-    const serverUrl = await getActiveAudioServerUrl();
-    fetch(`${serverUrl}/audio/preload?uri=${encodeURIComponent(uri)}`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => {});
+    fetchAndCacheTrackAudio(uri).catch(() => {});
     return true;
   } catch {
     return false;
@@ -253,21 +294,62 @@ export async function loadTrack(uri) {
 }
 
 /*
- * Plays an exact audio snippet using the Librespot backend.
+ * Plays an exact audio snippet using in-memory Web Audio Buffer (0ms instant replay/skip).
  */
 export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay = () => {}) {
-  const serverUrl = await getActiveAudioServerUrl();
-  console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${serverUrl}`);
+  // Stop previous playback
+  stopPlayback();
 
-  // Stop any existing HTML5 audio
-  if (currentHtmlAudio) {
+  const ctx = getAudioContext();
+
+  // Try in-memory buffer
+  let buffer = audioBufferCache.get(uri);
+  if (!buffer) {
     try {
-      currentHtmlAudio.pause();
-      currentHtmlAudio.currentTime = 0;
-      currentHtmlAudio = null;
-    } catch {}
+      buffer = await fetchAndCacheTrackAudio(uri);
+    } catch (e) {
+      console.warn('[Songuess] Buffer cache fetch failed, falling back to direct stream:', e);
+    }
   }
 
+  if (!isCurrent()) return;
+
+  if (ctx && buffer) {
+    console.log(`[Songuess] 🚀 Playing ${seconds}s snippet directly from browser RAM (0ms latency)`);
+    return new Promise((resolve) => {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      currentSourceNode = source;
+
+      onPlay?.();
+      source.start(0, 0, seconds);
+
+      currentPlaybackTimeout = setTimeout(() => {
+        try {
+          source.stop();
+        } catch {}
+        if (currentSourceNode === source) {
+          currentSourceNode = null;
+        }
+        resolve();
+      }, seconds * 1000);
+
+      source.onended = () => {
+        if (currentPlaybackTimeout) {
+          clearTimeout(currentPlaybackTimeout);
+          currentPlaybackTimeout = null;
+        }
+        if (currentSourceNode === source) {
+          currentSourceNode = null;
+        }
+        resolve();
+      };
+    });
+  }
+
+  // HTML5 Fallback
+  const serverUrl = await getActiveAudioServerUrl();
   const audioUrl = `${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
   const audio = new Audio(audioUrl);
   currentHtmlAudio = audio;
@@ -310,6 +392,19 @@ export async function replaySnippet(uri, seconds, isCurrent = () => true) {
 export async function stopPlayback() {
   ++operationId;
 
+  if (currentPlaybackTimeout) {
+    clearTimeout(currentPlaybackTimeout);
+    currentPlaybackTimeout = null;
+  }
+
+  if (currentSourceNode) {
+    try {
+      currentSourceNode.stop();
+      currentSourceNode.disconnect();
+    } catch {}
+    currentSourceNode = null;
+  }
+
   // Stop HTML5 audio if active
   if (currentHtmlAudio) {
     try {
@@ -318,19 +413,4 @@ export async function stopPlayback() {
       currentHtmlAudio = null;
     } catch {}
   }
-
-  const serverOnline = await isAudioServerOnline();
-  if (serverOnline) return;
-
-  return enqueue(async () => {
-    const player = getCurrentPlayer();
-    if (!player) return;
-
-    await setVolume(player, 0);
-    await pauseConfirmed(player);
-    await seekToZero(player);
-
-    const vol = savedVolume && savedVolume > 0.05 ? savedVolume : 0.5;
-    await setVolume(player, vol);
-  });
 }
