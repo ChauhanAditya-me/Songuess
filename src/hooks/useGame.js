@@ -100,14 +100,6 @@ export function useGame(tracks, playerReady) {
   }, []);
 
   const start = useCallback(async () => {
-    if (!playerReady) {
-      const serverOnline = await isAudioServerOnline();
-      if (!serverOnline) {
-        setError('Connecting to audio engine, please try again in a moment...');
-        return;
-      }
-    }
-
     let track = preparedTrackRef.current;
 
     if (!track) {
@@ -119,14 +111,6 @@ export function useGame(tracks, playerReady) {
       return;
     }
 
-    // If the preloader is still finishing, wait for it briefly rather than blocking indefinitely
-    if (preloadPromiseRef.current) {
-      await Promise.race([
-        preloadPromiseRef.current,
-        new Promise(r => setTimeout(r, 1500))
-      ]);
-    }
-
     setGameTrack(track);
     setStage(0);
     setGuess('');
@@ -134,9 +118,8 @@ export function useGame(tracks, playerReady) {
 
     await play(track, 0);
 
-    // Immediately prepare another candidate for the next round.
     prepareNext(track.id);
-  }, [tracks, playerReady, play, prepareNext]);
+  }, [tracks, play, prepareNext]);
 
   const replay = useCallback(async () => {
     if (!gameTrack) return;
@@ -207,13 +190,6 @@ export function useGame(tracks, playerReady) {
       setError('No playable tracks found.');
       setStatus('idle');
       return;
-    }
-
-    if (preloadPromiseRef.current) {
-      await Promise.race([
-        preloadPromiseRef.current,
-        new Promise(r => setTimeout(r, 1500))
-      ]);
     }
 
     if (requestId !== requestRef.current) return;

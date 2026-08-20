@@ -233,33 +233,19 @@ export async function ensurePlayer() {
 }
 
 /*
- * Prepares a track and caches it into memory (or SDK).
+ * Prepares a track and caches it into memory.
  */
 export async function preloadTrack(uri) {
-  const serverOnline = await isAudioServerOnline();
-  if (serverOnline) {
+  try {
     const serverUrl = await getActiveAudioServerUrl();
-    // Heat server-side cache in background
     fetch(`${serverUrl}/audio/preload?uri=${encodeURIComponent(uri)}`, {
       method: 'POST',
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(3000),
     }).catch(() => {});
     return true;
+  } catch {
+    return false;
   }
-
-  return enqueue(async () => {
-    const { player, deviceId } = await ensurePlayer();
-
-    const current = await getState(player);
-    if (current?.track_window?.current_track?.uri === uri) {
-      await pauseConfirmed(player);
-      await seekToZero(player);
-      return player;
-    }
-
-    await loadTrackInternal(player, deviceId, uri);
-    return player;
-  });
 }
 
 export async function loadTrack(uri) {
@@ -267,49 +253,55 @@ export async function loadTrack(uri) {
 }
 
 /*
- * Plays an exact audio snippet using the Librespot backend (or falls back to SDK).
+ * Plays an exact audio snippet using the Librespot backend.
  */
 export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay = () => {}) {
-  const serverOnline = await isAudioServerOnline();
+  const serverUrl = await getActiveAudioServerUrl();
+  console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${serverUrl}`);
 
-  if (serverOnline) {
-    const serverUrl = await getActiveAudioServerUrl();
-    console.log(`[Songuess] ⚡ Streaming snippet from Librespot Audio Server: ${serverUrl}`);
-    // Stop any existing HTML5 audio
-    if (currentHtmlAudio) {
-      try {
-        currentHtmlAudio.pause();
-        currentHtmlAudio = null;
-      } catch {}
-    }
-
-    const audioUrl = `${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
-    const audio = new Audio(audioUrl);
-    currentHtmlAudio = audio;
-
-    return new Promise((resolve, reject) => {
-      audio.onplaying = () => {
-        if (isCurrent()) {
-          onPlay?.();
-        }
-      };
-
-      audio.onended = () => {
-        if (currentHtmlAudio === audio) currentHtmlAudio = null;
-        resolve();
-      };
-
-      audio.onerror = (err) => {
-        if (currentHtmlAudio === audio) currentHtmlAudio = null;
-        console.error('[Songuess] Audio playback error from server:', err);
-        reject(new Error('Audio playback failed from server.'));
-      };
-
-      audio.play().catch(reject);
-    });
+  // Stop any existing HTML5 audio
+  if (currentHtmlAudio) {
+    try {
+      currentHtmlAudio.pause();
+      currentHtmlAudio.currentTime = 0;
+      currentHtmlAudio = null;
+    } catch {}
   }
 
-  console.warn('[Songuess] Audio server is offline. Falling back to Spotify Web Playback SDK...');
+  const audioUrl = `${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=${seconds}`;
+  const audio = new Audio(audioUrl);
+  currentHtmlAudio = audio;
+
+  return new Promise((resolve, reject) => {
+    let triggered = false;
+
+    const handleStart = () => {
+      if (!triggered && isCurrent()) {
+        triggered = true;
+        onPlay?.();
+      }
+    };
+
+    audio.onplaying = handleStart;
+    audio.oncanplaythrough = handleStart;
+
+    audio.onended = () => {
+      if (currentHtmlAudio === audio) currentHtmlAudio = null;
+      resolve();
+    };
+
+    audio.onerror = (err) => {
+      if (currentHtmlAudio === audio) currentHtmlAudio = null;
+      console.error('[Songuess] Audio snippet error:', err);
+      reject(new Error('Audio snippet took too long or failed to load.'));
+    };
+
+    audio.play().catch(err => {
+      console.warn('[Songuess] Autoplay prevented by browser, click play to listen:', err);
+      resolve();
+    });
+  });
+}
 
   // --- Fallback to Spotify Web Playback SDK ---
   const player = getCurrentPlayer();
