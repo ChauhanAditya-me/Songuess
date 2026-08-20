@@ -399,7 +399,7 @@ export async function replaySnippet(uri, seconds, isCurrent = () => true) {
   return playSnippet(uri, seconds, isCurrent);
 }
 
-export function stopPlayback() {
+export async function stopPlayback() {
   ++operationId;
 
   if (currentPlaybackTimeout) {
