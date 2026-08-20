@@ -1,8 +1,14 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
+import { playFullTrack, stopPlayback } from '../spotify/playback';
 
 export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlaylists }) {
   useEffect(() => {
+    // Play the full track reveal/celebration audio
+    if (track?.uri) {
+      playFullTrack(track.uri);
+    }
+
     // Trigger celebratory confetti burst
     const end = Date.now() + 1500;
     const colors = ['#1ed760', '#ffffff', '#22e570', '#88ffbb'];
@@ -27,7 +33,11 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
         requestAnimationFrame(frame);
       }
     })();
-  }, []);
+
+    return () => {
+      stopPlayback();
+    };
+  }, [track]);
 
   const coverUrl =
     track?.album?.images?.[0]?.url ||

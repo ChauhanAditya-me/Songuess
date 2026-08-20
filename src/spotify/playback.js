@@ -257,7 +257,6 @@ export async function fetchAndCacheTrackAudio(uri) {
   }
 
   const serverUrl = await getActiveAudioServerUrl();
-  console.log(`[Songuess] ⚡ Caching track audio into browser memory: ${uri}`);
   const res = await fetch(`${serverUrl}/audio/snippet?uri=${encodeURIComponent(uri)}&duration=15`);
   if (!res.ok) {
     throw new Error('Failed to load audio snippet from server');
@@ -307,15 +306,12 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   if (!buffer) {
     try {
       buffer = await fetchAndCacheTrackAudio(uri);
-    } catch (e) {
-      console.warn('[Songuess] Buffer cache fetch failed, falling back to direct stream:', e);
-    }
+    } catch {}
   }
 
   if (!isCurrent()) return;
 
   if (ctx && buffer) {
-    console.log(`[Songuess] 🚀 Playing ${seconds}s snippet directly from browser RAM (0ms latency)`);
     return new Promise((resolve) => {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
@@ -372,24 +368,38 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
       resolve();
     };
 
-    audio.onerror = (err) => {
+    audio.onerror = () => {
       if (currentHtmlAudio === audio) currentHtmlAudio = null;
-      console.error('[Songuess] Audio snippet error:', err);
       reject(new Error('Audio snippet took too long or failed to load.'));
     };
 
-    audio.play().catch(err => {
-      console.warn('[Songuess] Autoplay prevented by browser, click play to listen:', err);
+    audio.play().catch(() => {
       resolve();
     });
   });
+}
+
+/*
+ * Plays the full song audio on the Result (Win / Lost) screens.
+ */
+export async function playFullTrack(uri) {
+  stopPlayback();
+
+  try {
+    const serverUrl = await getActiveAudioServerUrl();
+    const audioUrl = `${serverUrl}/audio/full?uri=${encodeURIComponent(uri)}`;
+    const audio = new Audio(audioUrl);
+    currentHtmlAudio = audio;
+    audio.volume = 0.8;
+    audio.play().catch(() => {});
+  } catch {}
 }
 
 export async function replaySnippet(uri, seconds, isCurrent = () => true) {
   return playSnippet(uri, seconds, isCurrent);
 }
 
-export async function stopPlayback() {
+export function stopPlayback() {
   ++operationId;
 
   if (currentPlaybackTimeout) {
@@ -410,6 +420,7 @@ export async function stopPlayback() {
     try {
       currentHtmlAudio.pause();
       currentHtmlAudio.currentTime = 0;
+      currentHtmlAudio.src = '';
       currentHtmlAudio = null;
     } catch {}
   }

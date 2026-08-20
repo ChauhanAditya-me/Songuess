@@ -1,6 +1,17 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { playFullTrack, stopPlayback } from '../spotify/playback';
 
 export default function LostScreen({ track, onNext, onBackToPlaylists }) {
+  useEffect(() => {
+    // Play full track reveal audio
+    if (track?.uri) {
+      playFullTrack(track.uri);
+    }
+
+    return () => {
+      stopPlayback();
+    };
+  }, [track]);
   const coverUrl =
     track?.album?.images?.[0]?.url ||
     track?.album?.images?.[1]?.url ||

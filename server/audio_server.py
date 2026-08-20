@@ -461,6 +461,29 @@ def get_snippet(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/audio/full")
+def get_full_track(
+    uri: str = Query(..., description="Spotify track URI (e.g. spotify:track:...) or ID"),
+):
+    try:
+        raw_bytes = get_track_bytes(uri)
+        wav_audio = slice_audio(raw_bytes, duration=300.0, start_sec=0.0)
+        return Response(
+            content=wav_audio,
+            media_type="audio/wav",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(wav_audio)),
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error producing full track audio")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/audio/preload")
 def preload_track_audio(
     uri: str = Query(..., description="Spotify track URI or ID"),
