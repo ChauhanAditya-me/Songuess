@@ -303,65 +303,6 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   });
 }
 
-  // --- Fallback to Spotify Web Playback SDK ---
-  const player = getCurrentPlayer();
-  if (!player) throw new Error('Spotify player is not initialized.');
-
-  const current = await player.getCurrentState().catch(() => null);
-  const loaded = current?.track_window?.current_track?.uri === uri;
-
-  if (!loaded) {
-    await loadTrack(uri);
-  }
-
-  if (!isCurrent()) return;
-
-  await player.pause().catch(() => {});
-  if (!isCurrent()) return;
-
-  await sleep(100);
-  await player.seek(0).catch(() => {});
-  if (!isCurrent()) return;
-
-  await sleep(100);
-  const vol = savedVolume && savedVolume > 0.05 ? savedVolume : 0.5;
-  await player.setVolume(vol).catch(() => {});
-
-  await player.resume();
-  if (isCurrent()) {
-    onPlay?.();
-  }
-
-  if (!isCurrent()) {
-    await player.pause().catch(() => {});
-    return;
-  }
-
-  const started = performance.now();
-  const targetMs = seconds * 1000;
-
-  while (isCurrent()) {
-    const state = await player.getCurrentState().catch(() => null);
-
-    if (state?.track_window?.current_track?.uri !== uri) {
-      break;
-    }
-
-    if (
-      state.position >= targetMs ||
-      performance.now() - started >= targetMs + 700
-    ) {
-      break;
-    }
-
-    await sleep(25);
-  }
-
-  if (isCurrent()) {
-    await player.pause().catch(() => {});
-  }
-}
-
 export async function replaySnippet(uri, seconds, isCurrent = () => true) {
   return playSnippet(uri, seconds, isCurrent);
 }
