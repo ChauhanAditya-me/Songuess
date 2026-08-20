@@ -20,55 +20,52 @@ export function useGame(tracks, playerReady) {
   const [streak, setStreak] = useState(0);
 
   const requestRef = useRef(0);
-  const preparedTrackRef = useRef(null);
-  const preloadPromiseRef = useRef(null);
+  const preloadQueueRef = useRef([]); // Buffer of preloaded tracks ready in RAM
+  const playedTrackIdsRef = useRef(new Set());
 
-  // Keep one track prepared while the user is looking at the playlist.
-  // The first Start can therefore skip most of Spotify's track-loading delay.
-  useEffect(() => {
-    let cancelled = false;
+  // Fill the preload queue with 2 tracks ahead of time in background
+  const replenishQueue = useCallback((tracksList = tracks) => {
+    if (!tracksList || tracksList.length === 0) return;
 
-    if (!tracks?.length) return;
+    while (preloadQueueRef.current.length < 2) {
+      // Pick a track not recently played
+      let candidate = pickRandomTrack(tracksList);
+      for (let i = 0; i < 6 && (playedTrackIdsRef.current.has(candidate?.id) || preloadQueueRef.current.some(t => t.id === candidate?.id)); i++) {
+        candidate = pickRandomTrack(tracksList);
+      }
+      if (!candidate) candidate = pickRandomTrack(tracksList);
+      if (!candidate) break;
 
-    const track = pickRandomTrack(tracks);
-    if (!track) return;
-
-    preparedTrackRef.current = track;
-
-    preloadPromiseRef.current = preloadTrack(track.uri)
-      .catch(() => null)
-      .finally(() => {
-        if (!cancelled) {
-          preloadPromiseRef.current = null;
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tracks]);
-
-  const prepareNext = useCallback((excludeId = null) => {
-    if (!tracks?.length) return null;
-
-    let track = pickRandomTrack(tracks);
-
-    for (let i = 0; i < 5 && track?.id === excludeId; i++) {
-      track = pickRandomTrack(tracks);
+      preloadQueueRef.current.push(candidate);
+      preloadTrack(candidate.uri).catch(() => {});
     }
-
-    if (!track) return null;
-
-    preparedTrackRef.current = track;
-
-    preloadPromiseRef.current = preloadTrack(track.uri)
-      .catch(() => null)
-      .finally(() => {
-        preloadPromiseRef.current = null;
-      });
-
-    return track;
   }, [tracks]);
+
+  // Initial fill when playlist changes
+  useEffect(() => {
+    preloadQueueRef.current = [];
+    playedTrackIdsRef.current = new Set();
+    if (tracks?.length) {
+      replenishQueue(tracks);
+    }
+  }, [tracks, replenishQueue]);
+
+  const getNextTrack = useCallback(() => {
+    let next = preloadQueueRef.current.shift();
+    if (!next) {
+      next = pickRandomTrack(tracks);
+    }
+    if (next) {
+      playedTrackIdsRef.current.add(next.id);
+      if (playedTrackIdsRef.current.size > 25) {
+        const oldest = playedTrackIdsRef.current.values().next().value;
+        playedTrackIdsRef.current.delete(oldest);
+      }
+    }
+    // Replenish the background queue immediately
+    replenishQueue(tracks);
+    return next;
+  }, [tracks, replenishQueue]);
 
   const play = useCallback(async (track, targetStage) => {
     const requestId = ++requestRef.current;
@@ -94,18 +91,24 @@ export function useGame(tracks, playerReady) {
       }
     } catch (e) {
       if (requestId === requestRef.current) {
-        setStatus('idle');
-        setError(e.message);
+        console.warn(`[Game] Track ${track?.name} failed to load (${e.message}). Auto-advancing to next track...`);
+        const next = getNextTrack();
+        if (next && next.id !== track?.id) {
+          setGameTrack(next);
+          setStage(0);
+          setGuess('');
+          setResult(null);
+          play(next, 0);
+        } else {
+          setStatus('idle');
+          setError('Could not load audio. Please select another playlist.');
+        }
       }
     }
-  }, []);
+  }, [getNextTrack]);
 
   const start = useCallback(async () => {
-    let track = preparedTrackRef.current;
-
-    if (!track) {
-      track = pickRandomTrack(tracks);
-    }
+    const track = getNextTrack();
 
     if (!track) {
       setError('No playable tracks found.');
@@ -118,9 +121,7 @@ export function useGame(tracks, playerReady) {
     setResult(null);
 
     await play(track, 0);
-
-    prepareNext(track.id);
-  }, [tracks, play, prepareNext]);
+  }, [getNextTrack, play]);
 
   const replay = useCallback(async () => {
     if (!gameTrack) return;
@@ -136,7 +137,6 @@ export function useGame(tracks, playerReady) {
       setStatus('gave_up');
       setStreak(0);
       stopPlayback().catch(() => {});
-      prepareNext(gameTrack.id);
       return;
     }
 
@@ -166,12 +166,10 @@ export function useGame(tracks, playerReady) {
       setResult('correct');
       setStatus('correct');
       setGuess('');
-
-      prepareNext(gameTrack.id);
     } else {
       setResult('wrong');
     }
-  }, [gameTrack, guess, status, stage, prepareNext]);
+  }, [gameTrack, guess, status, stage]);
 
   const stop = useCallback(async () => {
     ++requestRef.current;
@@ -181,13 +179,9 @@ export function useGame(tracks, playerReady) {
 
   const nextRound = useCallback(async () => {
     const requestId = ++requestRef.current;
-    stopPlayback().catch(() => {});
+    await stopPlayback();
 
-    let track = preparedTrackRef.current;
-
-    if (!track || track.id === gameTrack?.id) {
-      track = pickRandomTrack(tracks);
-    }
+    const track = getNextTrack();
 
     if (!track) {
       setGameTrack(null);
@@ -204,9 +198,7 @@ export function useGame(tracks, playerReady) {
     setResult(null);
 
     await play(track, 0);
-
-    prepareNext(track.id);
-  }, [tracks, gameTrack, play, prepareNext]);
+  }, [getNextTrack, play]);
 
   const reset = useCallback(async () => {
     ++requestRef.current;
@@ -220,10 +212,11 @@ export function useGame(tracks, playerReady) {
     setScore(0);
     setStreak(0);
     setError(null);
-
-    preparedTrackRef.current = null;
-    preloadPromiseRef.current = null;
-  }, []);
+    preloadQueueRef.current = [];
+    if (tracks?.length) {
+      replenishQueue(tracks);
+    }
+  }, [tracks, replenishQueue]);
 
   return {
     gameTrack,

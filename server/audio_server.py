@@ -182,44 +182,56 @@ def startup_event():
 fetch_lock = threading.Lock()
 
 
-def get_track_bytes(raw_track_id: str) -> bytes:
+def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes:
     """Fetch or retrieve cached raw track audio bytes from Spotify (thread-safe)."""
     track_id_clean = raw_track_id.replace("spotify:track:", "").strip()
 
     if track_id_clean in track_cache:
-        return track_cache[track_id_clean]
+        cached = track_cache[track_id_clean]
+        if max_bytes is None and len(cached) < 1_000_000:
+            pass
+        else:
+            return cached
 
     with fetch_lock:
         # Check cache again inside lock
         if track_id_clean in track_cache:
-            return track_cache[track_id_clean]
+            cached = track_cache[track_id_clean]
+            if max_bytes is None and len(cached) < 1_000_000:
+                pass
+            else:
+                return cached
 
         track_id = TrackId.from_base62(track_id_clean)
-        logger.info(f"Fetching audio for track {track_id_clean} from Spotify...")
+        logger.info(f"Fetching audio for track {track_id_clean} from Spotify (max_bytes={max_bytes})...")
 
-        stream = None
-        for attempt in range(1, 3):
+        raw_data = None
+        qualities = [AudioQuality.NORMAL, AudioQuality.HIGH, AudioQuality.VERY_HIGH]
+        for attempt, quality in enumerate(qualities, start=1):
             try:
                 sess = get_session()
                 stream = sess.content_feeder().load(
                     track_id,
-                    VorbisOnlyAudioQuality(AudioQuality.HIGH),
+                    VorbisOnlyAudioQuality(quality),
                     False,
                     None,
                 )
                 if stream and stream.input_stream:
-                    break
+                    if max_bytes:
+                        raw_data = stream.input_stream.stream().read(max_bytes)
+                    else:
+                        raw_data = stream.input_stream.stream().read()
+                    if raw_data:
+                        break
             except Exception as e:
-                logger.warning(f"Attempt {attempt} failed to load stream: {e}. Reconnecting session...")
-                reset_session()
+                err_msg = str(e)
+                logger.warning(f"Attempt {attempt} ({quality}) failed for {track_id_clean}: {err_msg}")
+                # Only reset session on socket / connection drops, NOT on audio key restrictions
+                if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
+                    reset_session()
 
-        if not stream or not stream.input_stream:
-            raise HTTPException(status_code=404, detail="Track audio stream could not be loaded")
-
-        # Read all stream bytes
-        raw_data = stream.input_stream.stream().read()
         if not raw_data:
-            raise HTTPException(status_code=500, detail="Empty audio stream received")
+            raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")
 
         # Keep in memory cache (capped to last 50 tracks)
         if len(track_cache) > 50:
@@ -611,7 +623,7 @@ def get_snippet(
     start: float = Query(0.0, description="Start offset in seconds"),
 ):
     try:
-        raw_bytes = get_track_bytes(uri)
+        raw_bytes = get_track_bytes(uri, max_bytes=650 * 1024 if duration <= 20 else None)
         fmt = "wav" if duration <= 20 else "mp3"
         audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=start, format=fmt)
         return Response(
