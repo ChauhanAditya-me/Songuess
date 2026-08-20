@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { beginSpotifyLogin, exchangeCode, getAccessToken, logout } from './spotify/auth';
+import { beginSpotifyLogin, exchangeCode, logout } from './spotify/auth';
 import { useSpotify } from './hooks/useSpotify';
 import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
@@ -64,17 +64,28 @@ function Home() {
     spotify.resetPlaylist();
   };
 
-  const isLoggedOut = !spotify.profile && getAccessToken() == null;
+  const isLoggedOut = !spotify.loading && !spotify.profile;
 
   return (
     <div className="app-container">
-      {/* 1. Landing Screen */}
-      {isLoggedOut && (
-        <LandingPage onConnect={beginSpotifyLogin} />
+      {/* 1. Initial Authentication & Profile Loading */}
+      {spotify.loading && (
+        <div className="loading-screen">
+          <div className="loading-pulse-disc">🎵</div>
+          <p className="loading-text">Connecting to Spotify...</p>
+        </div>
       )}
 
-      {/* 2. Playlist Selector Screen */}
-      {spotify.profile && !spotify.selectedPlaylist && (
+      {/* 2. Landing Screen (Not logged in or Session Expired) */}
+      {isLoggedOut && (
+        <LandingPage
+          onConnect={beginSpotifyLogin}
+          error={spotify.error}
+        />
+      )}
+
+      {/* 3. Playlist Selector Screen */}
+      {!spotify.loading && spotify.profile && !spotify.selectedPlaylist && (
         <PlaylistSelector
           playlists={spotify.playlists}
           onSelectPlaylist={playlist => spotify.loadPlaylist(playlist)}
@@ -83,16 +94,34 @@ function Home() {
         />
       )}
 
-      {/* 3. Loading Tracks State */}
-      {spotify.selectedPlaylist && spotify.loadingTracks && (
+      {/* 4. Loading Tracks State */}
+      {!spotify.loading && spotify.selectedPlaylist && spotify.loadingTracks && (
         <div className="loading-screen">
           <div className="loading-pulse-disc">🎵</div>
           <p className="loading-text">Loading {spotify.selectedPlaylist.name}...</p>
         </div>
       )}
 
-      {/* 4. Active Game / Results */}
-      {spotify.selectedPlaylist && !spotify.loadingTracks && (
+      {/* 5. Playlist Load Error State */}
+      {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length === 0 && (
+        <div className="loading-screen">
+          <div className="loading-pulse-disc">⚠️</div>
+          <h2 style={{ marginTop: '16px', fontSize: '1.4rem' }}>Unable to load playlist</h2>
+          <p style={{ color: '#ff6b6b', marginTop: '8px', maxWidth: '400px', textAlign: 'center' }}>
+            {spotify.error || 'No playable tracks could be found in this playlist.'}
+          </p>
+          <button
+            className="btn-spotify-connect"
+            style={{ marginTop: '24px' }}
+            onClick={handleBackToPlaylists}
+          >
+            Choose Another Playlist
+          </button>
+        </div>
+      )}
+
+      {/* 6. Active Game / Results */}
+      {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length > 0 && (
         <>
           {game.result === 'correct' && (
             <WinScreen

@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react';
 import { getProfile, getPlaylists, getPlaylistTracks } from '../spotify/api';
-import { getAccessToken } from '../spotify/auth';
+import { isAuthenticated } from '../spotify/auth';
 
 export function useSpotify() {
   const [profile, setProfile] = useState(null);
   const [playlists, setPlaylists] = useState([]);
   const [tracks, setTracks] = useState([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  const [loading, setLoading] = useState(isAuthenticated());
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!getAccessToken()) return;
+    if (!isAuthenticated()) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
     Promise.all([getProfile(), getPlaylists()])
       .then(([p, lists]) => {
         setProfile(p);
@@ -24,7 +32,14 @@ export function useSpotify() {
         };
         setPlaylists([likedItem, ...(lists || [])]);
       })
-      .catch(e => setError(e.message));
+      .catch(e => {
+        console.warn('Failed to load Spotify profile/playlists:', e);
+        setProfile(null);
+        setError(e.message);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   async function loadPlaylist(playlist) {
@@ -49,5 +64,17 @@ export function useSpotify() {
     setTracks([]);
   }
 
-  return { profile, playlists, tracks, selectedPlaylist, loadingTracks, error, loadPlaylist, loadCustomTracks, resetPlaylist };
+  return {
+    profile,
+    playlists,
+    tracks,
+    selectedPlaylist,
+    loading,
+    loadingTracks,
+    error,
+    loadPlaylist,
+    loadCustomTracks,
+    resetPlaylist,
+  };
 }
+

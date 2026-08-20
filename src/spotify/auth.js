@@ -4,8 +4,115 @@ const REDIRECT_URI =
     ? 'http://127.0.0.1:5173/callback'
     : `${window.location.origin}/callback`;
 
+let refreshPromise = null;
+
 export function getAccessToken() {
   return localStorage.getItem('spotify_access_token');
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem('spotify_refresh_token');
+}
+
+export function getTokenExpiry() {
+  const expires = localStorage.getItem('spotify_token_expires');
+  return expires ? Number(expires) : 0;
+}
+
+export function isTokenExpired() {
+  const token = getAccessToken();
+  if (!token) return true;
+  const expires = getTokenExpiry();
+  // Expired or will expire within 60 seconds
+  return !expires || Date.now() >= expires - 60 * 1000;
+}
+
+export function clearAuthData() {
+  localStorage.removeItem('spotify_access_token');
+  localStorage.removeItem('spotify_refresh_token');
+  localStorage.removeItem('spotify_token_expires');
+  localStorage.removeItem('code_verifier');
+  sessionStorage.removeItem('code_verifier');
+}
+
+export function isAuthenticated() {
+  return Boolean(getAccessToken() || getRefreshToken());
+}
+
+export async function refreshAccessToken() {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    clearAuthData();
+    return null;
+  }
+
+  if (!CLIENT_ID) {
+    console.error('Spotify Client ID is missing. Cannot refresh token.');
+    return null;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const body = new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      });
+
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.warn('Failed to refresh Spotify token:', data);
+        clearAuthData();
+        return null;
+      }
+
+      if (data.access_token) {
+        localStorage.setItem('spotify_access_token', data.access_token);
+        const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+        localStorage.setItem('spotify_token_expires', String(Date.now() + expiresIn * 1000));
+      }
+
+      if (data.refresh_token) {
+        localStorage.setItem('spotify_refresh_token', data.refresh_token);
+      }
+
+      return data.access_token;
+    } catch (err) {
+      console.error('Error while refreshing token:', err);
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+export async function getValidAccessToken() {
+  const token = getAccessToken();
+  if (token && !isTokenExpired()) {
+    return token;
+  }
+
+  const refreshToken = getRefreshToken();
+  if (refreshToken) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return refreshed;
+    }
+  }
+
+  return null;
 }
 
 export function generateCodeVerifier(length = 128) {
@@ -34,7 +141,7 @@ export async function beginSpotifyLogin() {
     client_id: CLIENT_ID,
     response_type: 'code',
     redirect_uri: REDIRECT_URI,
-    scope: 'user-read-private user-read-email playlist-read-private streaming user-modify-playback-state',
+    scope: 'user-read-private user-read-email playlist-read-private playlist-read-collaborative user-library-read streaming user-modify-playback-state user-read-playback-state',
     code_challenge_method: 'S256',
     code_challenge: challenge,
   });
@@ -71,7 +178,9 @@ export async function exchangeCode(code) {
 }
 
 export function logout() {
+  clearAuthData();
   localStorage.clear();
   sessionStorage.clear();
   window.location.replace('/');
 }
+

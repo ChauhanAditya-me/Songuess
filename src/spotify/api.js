@@ -1,14 +1,28 @@
-import { getAccessToken } from './auth';
+import { getValidAccessToken, refreshAccessToken, clearAuthData } from './auth';
 import { getActiveAudioServerUrl } from './playback';
 
-export async function spotifyFetch(url, options = {}) {
-  const token = getAccessToken();
-  if (!token) throw new Error('Spotify is not connected.');
+export async function spotifyFetch(url, options = {}, isRetry = false) {
+  const token = await getValidAccessToken();
+  if (!token) throw new Error('Spotify session expired or not connected.');
+
   const response = await fetch(url, {
     ...options,
     headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
   });
+
+  if (response.status === 401 && !isRetry) {
+    const refreshedToken = await refreshAccessToken();
+    if (refreshedToken) {
+      return spotifyFetch(url, options, true);
+    }
+    clearAuthData();
+    throw new Error('Spotify session expired. Please connect Spotify again.');
+  }
+
   if (!response.ok) {
+    if (response.status === 401) {
+      clearAuthData();
+    }
     const text = await response.text();
     let message = text;
     try { const data = JSON.parse(text); message = data?.error?.message || data?.error_description || text; } catch {}
@@ -16,6 +30,7 @@ export async function spotifyFetch(url, options = {}) {
   }
   return response;
 }
+
 
 export async function getProfile() {
   return (await spotifyFetch('https://api.spotify.com/v1/me')).json();
@@ -56,23 +71,66 @@ export async function getLikedTracks() {
 }
 
 export async function getPlaylistTracks(playlistId) {
+  if (!playlistId) return [];
+
   if (playlistId === '__liked__') {
     return getLikedTracks();
   }
 
+  const cleanId = String(playlistId)
+    .trim()
+    .replace(/^spotify:playlist:/, '')
+    .split('?')[0]
+    .split('/')
+    .pop();
+
   const tracks = [];
 
-  // 1. First attempt: Direct Spotify Web API playlist endpoint
+  // 1. First attempt: Direct Spotify Web API playlist tracks endpoint
   try {
-    const url = `https://api.spotify.com/v1/playlists/${playlistId}`;
+    let nextUrl = `https://api.spotify.com/v1/playlists/${cleanId}/tracks?limit=50&additional_types=track`;
+    let pages = 0;
+
+    while (nextUrl && pages < 5) {
+      try {
+        const pageRes = await spotifyFetch(nextUrl);
+        if (!pageRes.ok) break;
+        const pageData = await pageRes.json();
+        const items = pageData.items || [];
+
+        for (const item of items) {
+          const t = item?.track || item?.item;
+          if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
+            tracks.push(t);
+          }
+        }
+
+        nextUrl = pageData.next;
+        pages++;
+      } catch (err) {
+        console.warn(`Failed to fetch page ${pages} for playlist ${cleanId}:`, err);
+        break;
+      }
+    }
+  } catch (err) {
+    console.warn(`Primary tracks fetch failed for playlist ${cleanId}:`, err);
+  }
+
+  if (tracks.length > 0) {
+    return tracks;
+  }
+
+  // 2. Second attempt: Spotify Web API playlist entity endpoint (/v1/playlists/{id})
+  try {
+    const url = `https://api.spotify.com/v1/playlists/${cleanId}`;
     const initialRes = await spotifyFetch(url);
     if (initialRes.ok) {
       const playlistData = await initialRes.json();
       const trackObj = playlistData.tracks;
       if (trackObj?.items) {
         for (const item of trackObj.items) {
-          const t = item.track || item.item || item;
-          if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
+          const t = item?.track || item?.item;
+          if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
             tracks.push(t);
           }
         }
@@ -85,8 +143,8 @@ export async function getPlaylistTracks(playlistId) {
             if (!pageRes.ok) break;
             const pageData = await pageRes.json();
             for (const item of pageData.items || []) {
-              const t = item.track || item.item || item;
-              if (t && (t.type === 'track' || !t.type) && t.uri && t.name) {
+              const t = item?.track || item?.item;
+              if (t && t.name && t.uri && (t.type === 'track' || !t.type) && !item?.is_local) {
                 tracks.push(t);
               }
             }
@@ -98,23 +156,27 @@ export async function getPlaylistTracks(playlistId) {
         }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`Secondary playlist fetch failed for playlist ${cleanId}:`, err);
+  }
 
   if (tracks.length > 0) {
     return tracks;
   }
 
-  // 2. Second attempt: Render backend loader with Librespot token
+  // 3. Third attempt: Render backend loader with Librespot token
   try {
     const serverUrl = await getActiveAudioServerUrl();
-    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
+    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(cleanId)}`);
     if (res.ok) {
       const data = await res.json();
       if (data?.tracks?.length > 0) {
         return data.tracks;
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`Backend audio server playlist loader failed:`, err);
+  }
 
   return tracks;
 }

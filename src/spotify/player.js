@@ -1,4 +1,5 @@
 import { resetPlaybackQueue } from './playback';
+import { getValidAccessToken, refreshAccessToken } from './auth';
 
 const PLAYER_NAME = 'Songuess Player';
 
@@ -99,7 +100,14 @@ export async function getSpotifyPlayer() {
 
     player = new window.Spotify.Player({
       name: PLAYER_NAME,
-      getOAuthToken: cb => cb(localStorage.getItem('spotify_access_token')),
+      getOAuthToken: async cb => {
+        try {
+          const token = await getValidAccessToken();
+          cb(token || '');
+        } catch {
+          cb('');
+        }
+      },
       volume: 0.5
     });
 
@@ -130,7 +138,13 @@ export async function getSpotifyPlayer() {
       emit('error', message);
     });
 
-    player.addListener('authentication_error', ({ message }) => {
+    player.addListener('authentication_error', async ({ message }) => {
+      console.warn('Spotify SDK authentication error:', message);
+      try {
+        const freshToken = await refreshAccessToken();
+        if (freshToken) return;
+      } catch {}
+
       emit('error', `Authentication failed: ${message}`);
 
       if (rejectReady) {
@@ -141,6 +155,7 @@ export async function getSpotifyPlayer() {
         reject(new Error(`Authentication failed: ${message}`));
       }
     });
+
 
     player.addListener('account_error', ({ message }) => {
       emit('error', message);

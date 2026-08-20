@@ -256,7 +256,7 @@ def get_web_token():
 
     try:
         sess = get_session()
-        token_obj = sess.tokens().get_token("user-read-private,playlist-read-private")
+        token_obj = sess.tokens().get_token("user-read-private,playlist-read-private,playlist-read-collaborative")
         expires_in = getattr(token_obj, "expires_in", 3600) or 3600
         cached_web_token = {
             "access_token": token_obj.access_token,
@@ -396,6 +396,29 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
         token_data = get_web_token()
         token = token_data.get("access_token")
         if token:
+            # Try /tracks endpoint first
+            api_res = requests.get(
+                f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=8,
+            )
+            if api_res.status_code == 200:
+                tdata = api_res.json()
+                tracks = []
+                for item in (tdata.get("items") or []):
+                    t = item.get("track") or item.get("item") or item
+                    if t and t.get("uri") and t.get("name"):
+                        tracks.append(t)
+                if tracks:
+                    logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via /tracks endpoint")
+                    return {
+                        "id": playlist_id,
+                        "name": "Spotify Playlist",
+                        "tracks": tracks,
+                        "total": len(tracks),
+                    }
+
+            # Fallback to playlist entity endpoint
             api_res = requests.get(
                 f"https://api.spotify.com/v1/playlists/{playlist_id}",
                 headers={"Authorization": f"Bearer {token}"},
