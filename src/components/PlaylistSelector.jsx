@@ -1,11 +1,13 @@
 import React from 'react';
 import { LogoutIcon } from './Icons';
 
-export default function PlaylistSelector({ playlists, onSelectPlaylist, onLogout, profile }) {
+export default function PlaylistSelector({ playlists, onSelectPlaylist, onLogout, onBack, profile }) {
   return (
     <div className="playlist-screen">
       <header className="brand-header">
-        <span className="brand-logo">Songuess</span>
+        <button className="btn-back" onClick={onBack} title="Back to Home">
+          ← <span className="brand-logo">Songuess</span>
+        </button>
         {profile && (
           <div className="user-profile-badge">
             <span className="user-name">{profile.display_name}</span>

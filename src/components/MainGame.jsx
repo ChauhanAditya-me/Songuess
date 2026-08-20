@@ -26,10 +26,18 @@ export default function MainGame({
   return (
     <div className="game-screen">
       <header className="brand-header">
-        <button className="btn-back" onClick={onBackToPlaylists} title="Back to Playlists">
+        <button className="btn-back" onClick={onBackToPlaylists} title="Back to Home">
           ← <span className="brand-logo">Songuess</span>
         </button>
-        {playlistName && <span className="playlist-badge">{playlistName}</span>}
+        <div className="game-header-right">
+          {game.streak > 0 && (
+            <div className="streak-badge" key={game.streak}>
+              <span className="streak-fire">🔥</span>
+              <span className="streak-count">{game.streak}</span>
+            </div>
+          )}
+          {playlistName && <span className="playlist-badge">{playlistName}</span>}
+        </div>
       </header>
 
       <main className="game-content">

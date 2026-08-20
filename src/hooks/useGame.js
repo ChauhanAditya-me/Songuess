@@ -17,6 +17,7 @@ export function useGame(tracks, playerReady) {
   const [guess, setGuess] = useState('');
   const [result, setResult] = useState(null);
   const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
 
   const requestRef = useRef(0);
   const preparedTrackRef = useRef(null);
@@ -133,6 +134,7 @@ export function useGame(tracks, playerReady) {
       ++requestRef.current;
       setResult('gave_up');
       setStatus('gave_up');
+      setStreak(0);
       stopPlayback().catch(() => {});
       return;
     }
@@ -159,6 +161,7 @@ export function useGame(tracks, playerReady) {
       const wonAtSeconds = SNIPPET_DURATIONS[stage];
       setGuessedSeconds(wonAtSeconds);
       setScore(score => score + 1000);
+      setStreak(s => s + 1);
       setResult('correct');
       setStatus('correct');
       setGuess('');
@@ -214,6 +217,7 @@ export function useGame(tracks, playerReady) {
     setResult(null);
     setGuess('');
     setScore(0);
+    setStreak(0);
     setError(null);
 
     preparedTrackRef.current = null;
@@ -231,6 +235,7 @@ export function useGame(tracks, playerReady) {
     setGuess,
     result,
     score,
+    streak,
     start,
     replay,
     skip,

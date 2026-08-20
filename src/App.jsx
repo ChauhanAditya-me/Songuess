@@ -38,6 +38,7 @@ function Callback({ code }) {
 function Home() {
   const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
   const serverReady = Boolean(serverStatus.online && serverStatus.authenticated);
+  const [showHome, setShowHome] = useState(true);
 
   const spotify = useSpotify();
   const sdk = useSpotifyPlayer();
@@ -64,6 +65,13 @@ function Home() {
     spotify.resetPlaylist();
   };
 
+  const handleBackToHome = () => {
+    game.reset();
+    spotify.resetPlaylist();
+    setShowHome(true);
+  };
+
+  const isLoggedIn = !spotify.loading && spotify.profile;
   const isLoggedOut = !spotify.loading && !spotify.profile;
 
   return (
@@ -76,20 +84,31 @@ function Home() {
         </div>
       )}
 
-      {/* 2. Landing Screen (Not logged in or Session Expired) */}
+      {/* 2. Landing Screen — logged-out: Connect + Guest, logged-in: Play + Guest */}
       {isLoggedOut && (
         <LandingPage
           onConnect={beginSpotifyLogin}
+          isLoggedIn={false}
+          error={spotify.error}
+        />
+      )}
+
+      {isLoggedIn && showHome && !spotify.selectedPlaylist && (
+        <LandingPage
+          onPlay={() => setShowHome(false)}
+          isLoggedIn={true}
+          profileName={spotify.profile.display_name}
           error={spotify.error}
         />
       )}
 
       {/* 3. Playlist Selector Screen */}
-      {!spotify.loading && spotify.profile && !spotify.selectedPlaylist && (
+      {isLoggedIn && !showHome && !spotify.selectedPlaylist && (
         <PlaylistSelector
           playlists={spotify.playlists}
           onSelectPlaylist={playlist => spotify.loadPlaylist(playlist)}
           onLogout={logout}
+          onBack={() => setShowHome(true)}
           profile={spotify.profile}
         />
       )}
@@ -127,8 +146,9 @@ function Home() {
             <WinScreen
               track={game.gameTrack}
               guessedSeconds={game.guessedSeconds}
+              streak={game.streak}
               onNext={game.nextRound}
-              onBackToPlaylists={handleBackToPlaylists}
+              onBackToPlaylists={handleBackToHome}
             />
           )}
 
@@ -136,7 +156,7 @@ function Home() {
             <LostScreen
               track={game.gameTrack}
               onNext={game.nextRound}
-              onBackToPlaylists={handleBackToPlaylists}
+              onBackToPlaylists={handleBackToHome}
             />
           )}
 
@@ -145,7 +165,7 @@ function Home() {
               game={game}
               tracks={spotify.tracks}
               playlistName={spotify.selectedPlaylist.name}
-              onBackToPlaylists={handleBackToPlaylists}
+              onBackToPlaylists={handleBackToHome}
               serverReady={serverReady}
             />
           )}

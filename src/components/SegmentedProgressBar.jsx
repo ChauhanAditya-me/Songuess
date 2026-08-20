@@ -10,22 +10,50 @@ export default function SegmentedProgressBar({ currentStage, isPlaying, duration
     <div className="segmented-progress-container">
       <div className="segmented-progress-track">
         {SNIPPET_DURATIONS.map((sec, index) => {
-          const isUnlocked = index <= currentStage;
+          const isUnlocked = index < currentStage;
           const isCurrent = index === currentStage;
-          const flexBasis = `${(weights[index] / totalWeight) * 100}%`;
+          const isLocked = index > currentStage;
+
+          let segmentClass = 'progress-segment';
+          if (isUnlocked) segmentClass += ' unlocked';
+          else if (isCurrent) segmentClass += ' current';
+          else segmentClass += ' locked';
+          if (isCurrent && isPlaying) segmentClass += ' active-playing';
 
           return (
             <div
               key={index}
-              className={`progress-segment ${isUnlocked ? 'unlocked' : 'locked'} ${
-                isCurrent && isPlaying ? 'active-playing' : ''
-              }`}
+              className={segmentClass}
               style={{ flex: weights[index] }}
               title={`Snippet ${sec}s`}
             >
+              {/* Completed stages get a full fill */}
               {isUnlocked && <div className="progress-segment-fill" />}
-              {isCurrent && isPlaying && <div className="progress-segment-pulse" />}
+
+              {/* Current stage gets an animated left-to-right fill when playing */}
+              {isCurrent && isPlaying && (
+                <div
+                  className="progress-segment-active-fill"
+                  style={{ animationDuration: `${sec}s` }}
+                />
+              )}
             </div>
+          );
+        })}
+      </div>
+
+      {/* Duration labels */}
+      <div className="segmented-progress-labels">
+        {SNIPPET_DURATIONS.map((sec, index) => {
+          const isCurrent = index === currentStage;
+          return (
+            <span
+              key={index}
+              className={`progress-label ${isCurrent ? 'label-current' : ''} ${index <= currentStage ? 'label-unlocked' : ''}`}
+              style={{ flex: weights[index] }}
+            >
+              {sec}s
+            </span>
           );
         })}
       </div>

@@ -129,6 +129,42 @@ body {
   text-overflow: ellipsis;
 }
 
+.game-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Streak Badge */
+.streak-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 140, 0, 0.12);
+  border: 1px solid rgba(255, 140, 0, 0.25);
+  padding: 4px 12px;
+  border-radius: 16px;
+  animation: streakPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.streak-fire {
+  font-size: 0.9rem;
+  filter: drop-shadow(0 0 4px rgba(255, 140, 0, 0.5));
+}
+
+.streak-count {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #ff9900;
+  letter-spacing: -0.02em;
+}
+
+@keyframes streakPop {
+  0% { transform: scale(0.6); opacity: 0; }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 /* ==========================================================================
    1. LANDING PAGE
    ========================================================================== */
@@ -148,6 +184,32 @@ body {
   align-items: center;
   text-align: center;
   padding: 40px 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Floating music notes decoration */
+.landing-floating-notes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.floating-note {
+  position: absolute;
+  font-size: 2.2rem;
+  color: rgba(30, 215, 96, 0.12);
+  animation: floatNote 6s ease-in-out infinite;
+}
+
+.note-1 { top: 15%; left: 10%; animation-delay: 0s; }
+.note-2 { top: 30%; right: 12%; animation-delay: 2s; font-size: 1.8rem; }
+.note-3 { bottom: 20%; left: 18%; animation-delay: 4s; font-size: 2.6rem; }
+
+@keyframes floatNote {
+  0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.15; }
+  50% { transform: translateY(-20px) rotate(10deg); opacity: 0.3; }
 }
 
 .landing-title {
@@ -156,6 +218,8 @@ body {
   letter-spacing: -0.04em;
   color: var(--text-white);
   margin-bottom: 8px;
+  position: relative;
+  z-index: 1;
 }
 
 .landing-subtitle {
@@ -164,6 +228,19 @@ body {
   color: var(--text-muted);
   letter-spacing: -0.01em;
   margin-bottom: 42px;
+  position: relative;
+  z-index: 1;
+}
+
+.landing-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 300px;
 }
 
 .btn-spotify-connect {
@@ -184,6 +261,7 @@ body {
   gap: 12px;
   box-shadow: 0 8px 24px var(--spotify-green-glow);
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  width: 100%;
 }
 
 .btn-spotify-connect:hover {
@@ -194,6 +272,74 @@ body {
 
 .btn-spotify-connect:active {
   transform: scale(0.98);
+}
+
+/* Big green Play button for logged-in users */
+.btn-play-main {
+  background-color: var(--spotify-green);
+  color: var(--text-dark);
+  border: none;
+  border-radius: 30px;
+  height: 58px;
+  padding: 0 40px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-family: var(--font-family);
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  box-shadow: 0 8px 24px var(--spotify-green-glow);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  width: 100%;
+}
+
+.btn-play-main:hover {
+  background-color: var(--spotify-green-hover);
+  transform: scale(1.04);
+  box-shadow: 0 12px 30px rgba(30, 215, 96, 0.55);
+}
+
+.btn-play-main:active {
+  transform: scale(0.98);
+}
+
+.btn-play-icon {
+  font-size: 1.1rem;
+}
+
+/* Guest button (placeholder) */
+.btn-guest {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 30px;
+  height: 50px;
+  padding: 0 28px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: var(--font-family);
+  cursor: not-allowed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+  width: 100%;
+}
+
+.coming-soon-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 /* ==========================================================================
@@ -224,12 +370,14 @@ body {
 
 .playlist-list {
   width: 100%;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   max-height: 62vh;
   overflow-y: auto;
-  padding-right: 4px;
+  overflow-x: visible;
+  padding: 8px 12px;
 }
 
 .playlist-list::-webkit-scrollbar {
@@ -252,6 +400,8 @@ body {
   padding: 6px 14px;
   cursor: pointer;
   text-align: left;
+  overflow: hidden;
+  flex-shrink: 0;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
@@ -346,7 +496,7 @@ body {
 /* Segmented Snippet Progress Bar */
 .segmented-progress-container {
   width: 100%;
-  margin-bottom: 40px;
+  margin-bottom: 32px;
 }
 
 .segmented-progress-track {
@@ -364,26 +514,79 @@ body {
   height: 100%;
   border-radius: 6px;
   position: relative;
+  overflow: hidden;
   transition: background-color 0.3s ease;
 }
 
+/* Completed stages — solid green */
 .progress-segment.unlocked {
   background-color: var(--spotify-green);
 }
 
+/* Current stage — faded green background */
+.progress-segment.current {
+  background-color: rgba(30, 215, 96, 0.2);
+}
+
+/* Locked stages — dark */
 .progress-segment.locked {
   background-color: #333333;
 }
 
-.progress-segment.active-playing {
+/* Full fill for completed segments */
+.progress-segment-fill {
+  position: absolute;
+  inset: 0;
   background-color: var(--spotify-green);
-  box-shadow: 0 0 10px var(--spotify-green);
-  animation: pulseGlow 1.2s infinite ease-in-out;
+  border-radius: 6px;
 }
 
-@keyframes pulseGlow {
-  0%, 100% { opacity: 0.85; filter: brightness(1); }
-  50% { opacity: 1; filter: brightness(1.3); }
+/* Left-to-right fill animation for the active segment */
+.progress-segment-active-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  background: linear-gradient(90deg, var(--spotify-green) 0%, var(--spotify-green-hover) 100%);
+  border-radius: 6px;
+  transform-origin: left;
+  animation: fillLeftToRight linear forwards;
+  box-shadow: 0 0 8px var(--spotify-green-glow);
+}
+
+@keyframes fillLeftToRight {
+  0% { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+
+/* Active playing glow on the segment */
+.progress-segment.active-playing {
+  box-shadow: 0 0 10px rgba(30, 215, 96, 0.3);
+}
+
+/* Duration labels below the bar */
+.segmented-progress-labels {
+  display: flex;
+  gap: 3px;
+  padding: 0 2px;
+  margin-top: 6px;
+}
+
+.progress-label {
+  text-align: center;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #555;
+  transition: color 0.3s ease;
+}
+
+.progress-label.label-unlocked {
+  color: var(--spotify-green);
+}
+
+.progress-label.label-current {
+  color: rgba(30, 215, 96, 0.7);
 }
 
 /* Play/Pause Center Circle */
