@@ -104,18 +104,23 @@ export async function getPlaylistTracks(playlistId) {
 
   let tracks = [];
 
-  // --- Strategy 1: GET /v1/playlists/{id} (full playlist object) ---
+  // --- Strategy 1: GET /v1/playlists/{id} (full playlist object, no market) ---
   try {
     const res = await rawSpotifyFetch(
-      `https://api.spotify.com/v1/playlists/${playlistId}?market=from_token`
+      `https://api.spotify.com/v1/playlists/${playlistId}`
     );
+    console.warn(`[PlaylistLoader] Strategy 1 /playlists/${playlistId}: status=${res?.status}`);
     if (res?.ok) {
       const data = await res.json();
+      const totalReported = data?.tracks?.total ?? 0;
+      const itemCount = data?.tracks?.items?.length ?? 0;
+      console.warn(`[PlaylistLoader] Strategy 1 response: total=${totalReported}, items=${itemCount}`);
       tracks = extractTracks(data?.tracks?.items);
+      console.warn(`[PlaylistLoader] Strategy 1 extracted ${tracks.length} playable tracks`);
 
       let nextUrl = data?.tracks?.next;
       let pages = 1;
-      while (nextUrl && pages < 5) {
+      while (nextUrl && pages < 5 && tracks.length < totalReported) {
         const pageRes = await rawSpotifyFetch(nextUrl);
         if (!pageRes?.ok) break;
         const pageData = await pageRes.json();
@@ -124,24 +129,29 @@ export async function getPlaylistTracks(playlistId) {
         pages++;
       }
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[PlaylistLoader] Strategy 1 error:', e.message);
+  }
 
   if (tracks.length > 0) return tracks;
 
   // --- Strategy 2: GET /v1/playlists/{id}/tracks (tracks sub-endpoint) ---
   try {
-    let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50&market=from_token`;
+    let nextUrl = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`;
     let pages = 0;
 
     while (nextUrl && pages < 5) {
       const pageRes = await rawSpotifyFetch(nextUrl);
+      console.warn(`[PlaylistLoader] Strategy 2 /tracks page ${pages}: status=${pageRes?.status}`);
       if (!pageRes?.ok) break;
       const pageData = await pageRes.json();
       tracks.push(...extractTracks(pageData.items));
       nextUrl = pageData.next;
       pages++;
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[PlaylistLoader] Strategy 2 error:', e.message);
+  }
 
   if (tracks.length > 0) return tracks;
 
@@ -149,14 +159,18 @@ export async function getPlaylistTracks(playlistId) {
   try {
     const serverUrl = await getActiveAudioServerUrl();
     const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
+    console.warn(`[PlaylistLoader] Strategy 3 audio-server: status=${res?.status}`);
     if (res.ok) {
       const data = await res.json();
       if (data?.tracks?.length > 0) {
         return data.tracks;
       }
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[PlaylistLoader] Strategy 3 error:', e.message);
+  }
 
+  console.warn(`[PlaylistLoader] All strategies exhausted for playlist ${playlistId}. Returning ${tracks.length} tracks.`);
   return tracks;
 }
 
