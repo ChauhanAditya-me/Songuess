@@ -229,6 +229,9 @@ def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes
                 # Only reset session on socket / connection drops, NOT on audio key restrictions
                 if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
                     reset_session()
+                else:
+                    import time
+                    time.sleep(0.15)
 
         if not raw_data:
             raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")

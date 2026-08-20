@@ -22,22 +22,34 @@ export function useGame(tracks, playerReady) {
   const requestRef = useRef(0);
   const preloadQueueRef = useRef([]); // Buffer of preloaded tracks ready in RAM
   const playedTrackIdsRef = useRef(new Set());
+  const unplayableTrackIdsRef = useRef(new Set());
 
   // Fill the preload queue with 2 tracks ahead of time in background
   const replenishQueue = useCallback((tracksList = tracks) => {
     if (!tracksList || tracksList.length === 0) return;
 
+    // Filter out known unplayable tracks
+    const playableCandidates = tracksList.filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
+    if (!playableCandidates.length) return;
+
     while (preloadQueueRef.current.length < 2) {
       // Pick a track not recently played
-      let candidate = pickRandomTrack(tracksList);
+      let candidate = pickRandomTrack(playableCandidates);
       for (let i = 0; i < 6 && (playedTrackIdsRef.current.has(candidate?.id) || preloadQueueRef.current.some(t => t.id === candidate?.id)); i++) {
-        candidate = pickRandomTrack(tracksList);
+        candidate = pickRandomTrack(playableCandidates);
       }
-      if (!candidate) candidate = pickRandomTrack(tracksList);
+      if (!candidate) candidate = pickRandomTrack(playableCandidates);
       if (!candidate) break;
 
       preloadQueueRef.current.push(candidate);
-      preloadTrack(candidate.uri).catch(() => {});
+      preloadTrack(candidate.uri).then((ok) => {
+        if (!ok) {
+          // Track is unplayable on Spotify (e.g. 404 geo-restricted) - discard & blacklist
+          unplayableTrackIdsRef.current.add(candidate.id);
+          preloadQueueRef.current = preloadQueueRef.current.filter(t => t.id !== candidate.id);
+          replenishQueue(playableCandidates);
+        }
+      });
     }
   }, [tracks]);
 
@@ -45,6 +57,7 @@ export function useGame(tracks, playerReady) {
   useEffect(() => {
     preloadQueueRef.current = [];
     playedTrackIdsRef.current = new Set();
+    unplayableTrackIdsRef.current = new Set();
     if (tracks?.length) {
       replenishQueue(tracks);
     }
@@ -52,8 +65,12 @@ export function useGame(tracks, playerReady) {
 
   const getNextTrack = useCallback(() => {
     let next = preloadQueueRef.current.shift();
+    while (next && unplayableTrackIdsRef.current.has(next.id)) {
+      next = preloadQueueRef.current.shift();
+    }
     if (!next) {
-      next = pickRandomTrack(tracks);
+      const playable = tracks?.filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
+      next = pickRandomTrack(playable?.length ? playable : tracks);
     }
     if (next) {
       playedTrackIdsRef.current.add(next.id);
@@ -91,7 +108,10 @@ export function useGame(tracks, playerReady) {
       }
     } catch (e) {
       if (requestId === requestRef.current) {
-        console.warn(`[Game] Track ${track?.name} failed to load (${e.message}). Auto-advancing to next track...`);
+        console.warn(`[Game] Track ${track?.name} failed to load (${e.message}). Skipping unplayable track...`);
+        if (track?.id) {
+          unplayableTrackIdsRef.current.add(track.id);
+        }
         const next = getNextTrack();
         if (next && next.id !== track?.id) {
           setGameTrack(next);
@@ -101,7 +121,7 @@ export function useGame(tracks, playerReady) {
           play(next, 0);
         } else {
           setStatus('idle');
-          setError('Could not load audio. Please select another playlist.');
+          setError('Could not find playable tracks in this playlist.');
         }
       }
     }

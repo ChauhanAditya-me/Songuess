@@ -305,8 +305,8 @@ export async function fetchAndCacheTrackAudio(uri) {
 export async function preloadTrack(uri) {
   if (!uri) return false;
   try {
-    await fetchAndCacheTrackAudio(uri);
-    return true;
+    const buffer = await fetchAndCacheTrackAudio(uri);
+    return Boolean(buffer);
   } catch {
     return false;
   }
@@ -328,9 +328,7 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   // Try in-memory buffer
   let buffer = audioBufferCache.get(uri);
   if (!buffer) {
-    try {
-      buffer = await fetchAndCacheTrackAudio(uri);
-    } catch {}
+    buffer = await fetchAndCacheTrackAudio(uri);
   }
 
   if (!isCurrent()) return;
@@ -385,7 +383,7 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
     };
 
     audio.onplaying = handleStart;
-    audio.oncanplaythrough = handleStart;
+    audio.ontimeupdate = handleStart;
 
     audio.onended = () => {
       if (currentHtmlAudio === audio) currentHtmlAudio = null;
@@ -397,9 +395,16 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
       reject(new Error('Audio snippet took too long or failed to load.'));
     };
 
-    audio.play().catch(() => {
+    audio.play().catch(reject);
+
+    currentPlaybackTimeout = setTimeout(() => {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {}
+      if (currentHtmlAudio === audio) currentHtmlAudio = null;
       resolve();
-    });
+    }, seconds * 1000 + 400);
   });
 }
 
@@ -459,6 +464,11 @@ export async function playFullTrack(uri, delayMs = 400) {
           killAudioElement(audio);
           if (currentHtmlAudio === audio) currentHtmlAudio = null;
         }
+      };
+
+      audio.onerror = () => {
+        killAudioElement(audio);
+        if (currentHtmlAudio === audio) currentHtmlAudio = null;
       };
 
       audio.src = audioUrl;
