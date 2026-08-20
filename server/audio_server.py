@@ -176,18 +176,34 @@ def get_track_bytes(raw_track_id: str) -> bytes:
         return raw_data
 
 
-def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0) -> bytes:
-    """Uses ffmpeg to slice exact duration and encode to WAV instantly (<5ms)."""
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-i", "pipe:0",
-        "-ss", str(start_sec),
-        "-t", str(duration),
-        "-f", "wav",
-        "pipe:1",
-    ]
+def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0, format: str = "wav") -> tuple[bytes, str]:
+    """Uses ffmpeg to slice exact duration and encode to WAV (snippets) or MP3 (full songs) instantly."""
+    if format == "mp3" or duration > 20:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-i", "pipe:0",
+            "-ss", str(start_sec),
+            "-t", str(min(duration, 300.0)),
+            "-c:a", "libmp3lame",
+            "-b:a", "192k",
+            "-f", "mp3",
+            "pipe:1",
+        ]
+        media_type = "audio/mpeg"
+    else:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-i", "pipe:0",
+            "-ss", str(start_sec),
+            "-t", str(duration),
+            "-f", "wav",
+            "pipe:1",
+        ]
+        media_type = "audio/wav"
 
     process = subprocess.Popen(
         cmd,
@@ -202,7 +218,7 @@ def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0
         logger.error(f"FFmpeg error: {err.decode('utf-8', errors='ignore')}")
         raise HTTPException(status_code=500, detail="FFmpeg encoding error")
 
-    return out
+    return out, media_type
 
 
 @app.get("/")
@@ -218,6 +234,7 @@ def root():
         "endpoints": {
             "health": "/health",
             "snippet": "/audio/snippet?uri=<spotify_uri>&duration=<seconds>",
+            "full": "/audio/full?uri=<spotify_uri>",
             "preload": "/audio/preload?uri=<spotify_uri>"
         }
     }
@@ -444,14 +461,16 @@ def get_snippet(
 ):
     try:
         raw_bytes = get_track_bytes(uri)
-        wav_snippet = slice_audio(raw_bytes, duration=duration, start_sec=start)
+        fmt = "wav" if duration <= 20 else "mp3"
+        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=start, format=fmt)
         return Response(
-            content=wav_snippet,
-            media_type="audio/wav",
+            content=audio_data,
+            media_type=media_type,
             headers={
                 "Accept-Ranges": "bytes",
-                "Content-Length": str(len(wav_snippet)),
+                "Content-Length": str(len(audio_data)),
                 "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
             },
         )
     except HTTPException:
@@ -467,14 +486,15 @@ def get_full_track(
 ):
     try:
         raw_bytes = get_track_bytes(uri)
-        wav_audio = slice_audio(raw_bytes, duration=300.0, start_sec=0.0)
+        audio_data, media_type = slice_audio(raw_bytes, duration=240.0, start_sec=0.0, format="mp3")
         return Response(
-            content=wav_audio,
-            media_type="audio/wav",
+            content=audio_data,
+            media_type=media_type,
             headers={
                 "Accept-Ranges": "bytes",
-                "Content-Length": str(len(wav_audio)),
+                "Content-Length": str(len(audio_data)),
                 "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
             },
         )
     except HTTPException:

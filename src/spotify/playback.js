@@ -381,16 +381,42 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
 
 /*
  * Plays the full song audio on the Result (Win / Lost) screens.
+ * Starts INSTANTLY (0ms) using the in-memory RAM snippet, then seamlessly continues full MP3 playback!
  */
 export async function playFullTrack(uri) {
   stopPlayback();
 
+  const ctx = getAudioContext();
+  const cachedBuffer = audioBufferCache.get(uri);
+
+  // 1. Play instantly from RAM (0ms latency!)
+  if (ctx && cachedBuffer) {
+    const source = ctx.createBufferSource();
+    source.buffer = cachedBuffer;
+    source.connect(ctx.destination);
+    currentSourceNode = source;
+    source.start(0, 0);
+  }
+
+  // 2. Concurrently load full track MP3 stream
   try {
     const serverUrl = await getActiveAudioServerUrl();
     const audioUrl = `${serverUrl}/audio/full?uri=${encodeURIComponent(uri)}`;
     const audio = new Audio(audioUrl);
     currentHtmlAudio = audio;
-    audio.volume = 0.8;
+    audio.volume = 0.85;
+
+    audio.onplaying = () => {
+      // Once the full stream is playing, smoothly disconnect the temporary RAM snippet node
+      if (currentSourceNode) {
+        try {
+          currentSourceNode.stop();
+          currentSourceNode.disconnect();
+        } catch {}
+        currentSourceNode = null;
+      }
+    };
+
     audio.play().catch(() => {});
   } catch {}
 }
