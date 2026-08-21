@@ -434,16 +434,31 @@ let currentFullTrackId = 0;
 let fullTrackDelayTimer = null;
 
 /*
- * Plays the full song audio on the Result (Win / Lost) screens after a short delay (400ms).
- * Plays only the clean full MP3 stream with zero overlap or volume spikes.
+ * Plays reveal song audio on the Result (Win / Lost) screens with 0ms instant playback.
+ * Uses in-memory Web Audio Buffer first, falling back to fast snippet stream.
  */
-export async function playFullTrack(uri, delayMs = 400) {
+export async function playFullTrack(uri, delayMs = 50) {
   await stopPlayback();
   const thisTrackId = ++currentFullTrackId;
 
   if (fullTrackDelayTimer) {
     clearTimeout(fullTrackDelayTimer);
     fullTrackDelayTimer = null;
+  }
+
+  // 1. Instant 0ms playback if track audio buffer is already in memory
+  const ctx = getAudioContext();
+  const buffer = audioBufferCache.get(uri);
+  if (ctx && buffer) {
+    try {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(ctx.destination);
+      currentSourceNode = source;
+      source.start(0, 0);
+      return;
+    } catch {}
   }
 
   fullTrackDelayTimer = setTimeout(async () => {

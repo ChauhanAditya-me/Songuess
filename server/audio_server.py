@@ -661,10 +661,11 @@ def get_snippet(
 @app.get("/audio/full")
 def get_full_track(
     uri: str = Query(..., description="Spotify track URI (e.g. spotify:track:...) or ID"),
+    duration: float = Query(30.0, description="Reveal preview duration in seconds"),
 ):
     try:
-        raw_bytes = get_track_bytes(uri)
-        audio_data, media_type = slice_audio(raw_bytes, duration=240.0, start_sec=0.0, format="mp3")
+        raw_bytes = get_track_bytes(uri, max_bytes=650 * 1024)
+        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=0.0, format="mp3")
         return Response(
             content=audio_data,
             media_type=media_type,
