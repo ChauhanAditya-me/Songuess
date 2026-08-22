@@ -1,16 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-
-function normalize(text) {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 import { SearchIcon } from './Icons';
+import { normalizeAnswer } from '../utils/normalizeAnswer';
+import { getCoverUrl } from '../utils/getCoverUrl';
 
 export default function SongSearch({ tracks, value, onChange, onSelect }) {
   const [open, setOpen] = useState(false);
@@ -18,7 +9,7 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
   const containerRef = useRef(null);
 
   const results = useMemo(() => {
-    const query = normalize(value);
+    const query = normalizeAnswer(value);
 
     if (!query) return [];
 
@@ -26,12 +17,10 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
 
     return tracks
       .map(track => {
-        const title = normalize(track.name || '');
-        const artists = normalize(
+        const title = normalizeAnswer(track.name || '');
+        const artists = normalizeAnswer(
           track.artists?.map(a => a.name).join(' ') || ''
         );
-
-        const text = `${title} ${artists}`;
 
         let score = 0;
 
@@ -134,10 +123,7 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
       {open && value && results.length > 0 && (
         <div className="song-search-results">
           {results.map((track, index) => {
-            const cover =
-              track.album?.images?.[2]?.url ||
-              track.album?.images?.[0]?.url ||
-              null;
+            const cover = getCoverUrl(track);
 
             return (
               <button
@@ -150,7 +136,7 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
                 onClick={() => selectTrack(track)}
               >
                 {cover ? (
-                  <img src={cover} alt="" className="search-result-thumb" />
+                  <img src={cover} alt="" className="search-result-thumb" loading="lazy" />
                 ) : (
                   <span className="search-result-fallback">🎵</span>
                 )}

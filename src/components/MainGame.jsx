@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import SegmentedProgressBar from './SegmentedProgressBar';
-import { PlayIcon, PauseIcon, SkipIcon, SearchIcon } from './Icons';
+import { PlayIcon, PauseIcon, SkipIcon } from './Icons';
 import SongSearch from './SongSearch';
 
 export default function MainGame({
@@ -8,12 +8,11 @@ export default function MainGame({
   tracks,
   playlistName,
   onBackToPlaylists,
-  serverReady,
 }) {
   const isPlaying = game.status === 'playing';
   const isLoading = game.status === 'loading';
 
-  const handlePlayToggle = () => {
+  const handlePlayToggle = useCallback(() => {
     if (!game.gameTrack) {
       game.start();
     } else if (isPlaying) {
@@ -21,7 +20,23 @@ export default function MainGame({
     } else {
       game.replay();
     }
-  };
+  }, [game, isPlaying]);
+
+  // Keyboard shortcut listener (Space to play/pause snippet if search is not focused)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea') return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handlePlayToggle();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handlePlayToggle]);
 
   return (
     <div className="game-screen">
@@ -54,7 +69,7 @@ export default function MainGame({
             <button
               className={`btn-play-circle ${isPlaying ? 'playing' : ''} ${isLoading ? 'loading' : ''}`}
               onClick={handlePlayToggle}
-              title={isPlaying ? 'Pause snippet' : 'Play snippet'}
+              title={isPlaying ? 'Pause snippet (Space)' : 'Play snippet (Space)'}
             >
               {isLoading ? (
                 <div className="spinner-ring" />

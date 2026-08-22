@@ -1,10 +1,9 @@
 import React from 'react';
 import { SNIPPET_DURATIONS } from '../game/stages';
 
-export default function SegmentedProgressBar({ currentStage, isPlaying, duration }) {
+export default function SegmentedProgressBar({ currentStage, isPlaying }) {
   // Relative visual weights for the 5 stages: [0.1s, 0.5s, 1s, 5s, 15s]
   const weights = [1, 1.5, 2, 3, 5];
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
 
   return (
     <div className="segmented-progress-container">
@@ -12,7 +11,6 @@ export default function SegmentedProgressBar({ currentStage, isPlaying, duration
         {SNIPPET_DURATIONS.map((sec, index) => {
           const isUnlocked = index < currentStage;
           const isCurrent = index === currentStage;
-          const isLocked = index > currentStage;
 
           let segmentClass = 'progress-segment';
           if (isUnlocked) segmentClass += ' unlocked';

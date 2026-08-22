@@ -1,9 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useRef, useState } from 'react';
 import { beginSpotifyLogin, exchangeCode, logout } from './spotify/auth';
 import { useSpotify } from './hooks/useSpotify';
-import { useSpotifyPlayer } from './hooks/useSpotifyPlayer';
 import { useGame } from './hooks/useGame';
-import { getAudioServerAuthStatus } from './spotify/playback';
 import LandingPage from './components/LandingPage';
 import PlaylistSelector from './components/PlaylistSelector';
 import MainGame from './components/MainGame';
@@ -11,9 +9,51 @@ import WinScreen from './components/WinScreen';
 import LostScreen from './components/LostScreen';
 import './App.css';
 
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('[Songuess Crash]', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="app-container">
+          <div className="loading-screen">
+            <div className="loading-pulse-disc">⚠️</div>
+            <h2>Something went wrong</h2>
+            <p style={{ color: '#ff6b6b', marginTop: '10px', maxWidth: '360px', fontSize: '0.9rem' }}>
+              {this.state.error?.message || 'An unexpected error occurred.'}
+            </p>
+            <button
+              className="btn-spotify-connect"
+              style={{ marginTop: '20px' }}
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                window.location.replace('/');
+              }}
+            >
+              Restart App
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function Callback({ code }) {
   const started = useRef(false);
-  const [status, setStatus] = React.useState('Connecting to Spotify...');
+  const [status, setStatus] = useState('Connecting to Spotify...');
 
   useEffect(() => {
     if (started.current) return;
@@ -36,17 +76,11 @@ function Callback({ code }) {
 }
 
 function Home() {
-  const [serverStatus, setServerStatus] = useState({ online: false, authenticated: false });
-  const serverReady = Boolean(serverStatus.online && serverStatus.authenticated);
   const [showHome, setShowHome] = useState(true);
-
   const spotify = useSpotify();
-  const sdk = useSpotifyPlayer();
-  const game = useGame(spotify.tracks, sdk.ready || serverReady);
+  const game = useGame(spotify.tracks);
 
-  useEffect(() => {
-    getAudioServerAuthStatus().then(setServerStatus);
-  }, []);
+  const { start } = game;
 
   // Auto-start round 1 when a playlist finishes loading
   useEffect(() => {
@@ -56,9 +90,9 @@ function Home() {
       !game.gameTrack &&
       game.status === 'idle'
     ) {
-      game.start();
+      start();
     }
-  }, [spotify.selectedPlaylist, spotify.tracks, game.gameTrack, game.status]);
+  }, [spotify.selectedPlaylist, spotify.tracks, game.gameTrack, game.status, start]);
 
   const handleBackToPlaylists = () => {
     game.reset();
@@ -84,7 +118,7 @@ function Home() {
         </div>
       )}
 
-      {/* 2. Landing Screen — logged-out: Connect + Guest, logged-in: Play + Guest */}
+      {/* 2. Landing Screen — logged-out */}
       {isLoggedOut && (
         <LandingPage
           onConnect={beginSpotifyLogin}
@@ -93,6 +127,7 @@ function Home() {
         />
       )}
 
+      {/* 3. Landing Screen — logged-in */}
       {isLoggedIn && showHome && !spotify.selectedPlaylist && (
         <LandingPage
           onPlay={() => setShowHome(false)}
@@ -102,7 +137,7 @@ function Home() {
         />
       )}
 
-      {/* 3. Playlist Selector Screen */}
+      {/* 4. Playlist Selector Screen */}
       {isLoggedIn && !showHome && !spotify.selectedPlaylist && (
         <PlaylistSelector
           playlists={spotify.playlists}
@@ -113,7 +148,7 @@ function Home() {
         />
       )}
 
-      {/* 4. Loading Tracks State */}
+      {/* 5. Loading Playlist Tracks State */}
       {!spotify.loading && spotify.selectedPlaylist && spotify.loadingTracks && (
         <div className="loading-screen">
           <div className="loading-pulse-disc">🎵</div>
@@ -121,7 +156,7 @@ function Home() {
         </div>
       )}
 
-      {/* 5. Playlist Load Error State */}
+      {/* 6. Playlist Load Error State */}
       {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length === 0 && (
         <div className="loading-screen">
           <div className="loading-pulse-disc">⚠️</div>
@@ -139,7 +174,7 @@ function Home() {
         </div>
       )}
 
-      {/* 6. Active Game / Results */}
+      {/* 7. Active Game / Results */}
       {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length > 0 && (
         <>
           {game.result === 'correct' && (
@@ -166,7 +201,6 @@ function Home() {
               tracks={spotify.tracks}
               playlistName={spotify.selectedPlaylist.name}
               onBackToPlaylists={handleBackToHome}
-              serverReady={serverReady}
             />
           )}
         </>
@@ -194,6 +228,9 @@ export default function App() {
     );
   }
 
-  if (code) return <Callback code={code} />;
-  return <Home />;
+  return (
+    <ErrorBoundary>
+      {code ? <Callback code={code} /> : <Home />}
+    </ErrorBoundary>
+  );
 }

@@ -3,6 +3,7 @@ import io
 import subprocess
 import logging
 import threading
+from collections import OrderedDict
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,10 +39,12 @@ app.add_middleware(
 )
 
 session: Optional[Session] = None
-# Cache raw Vorbis stream bytes per track_id
-track_cache: dict[str, bytes] = {}
-# Cache loaded playlists for instant (1ms) repeat loads
-playlist_cache: dict[str, dict] = {}
+
+# Thread-safe LRU caches
+cache_lock = threading.Lock()
+track_cache: OrderedDict[str, bytes] = OrderedDict()  # track_id -> raw bytes (max 50)
+sliced_audio_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()  # key -> (data, media_type) (max 100)
+playlist_cache: OrderedDict[str, dict] = OrderedDict()  # playlist_id -> playlist dict (max 50)
 
 CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
 
@@ -179,75 +182,101 @@ def startup_event():
         logger.info(f"Startup session check: {e}")
 
 
-fetch_lock = threading.Lock()
+# Concurrency control: allow up to 3 parallel downloads without exhausting session buffers
+fetch_semaphore = threading.Semaphore(3)
+per_track_locks: dict[str, threading.Lock] = {}
+per_track_meta_lock = threading.Lock()
+
+
+def get_track_lock(track_id: str) -> threading.Lock:
+    with per_track_meta_lock:
+        if track_id not in per_track_locks:
+            per_track_locks[track_id] = threading.Lock()
+        return per_track_locks[track_id]
 
 
 def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes:
-    """Fetch or retrieve cached raw track audio bytes from Spotify (thread-safe)."""
+    """Fetch or retrieve cached raw track audio bytes from Spotify (LRU cached & thread-safe)."""
     track_id_clean = raw_track_id.replace("spotify:track:", "").strip()
 
-    if track_id_clean in track_cache:
-        cached = track_cache[track_id_clean]
-        if max_bytes is None and len(cached) < 1_000_000:
-            pass
-        else:
-            return cached
-
-    with fetch_lock:
-        # Check cache again inside lock
+    # 1. Fast Cache Read
+    with cache_lock:
         if track_id_clean in track_cache:
             cached = track_cache[track_id_clean]
             if max_bytes is None and len(cached) < 1_000_000:
                 pass
             else:
+                track_cache.move_to_end(track_id_clean)
                 return cached
 
-        track_id = TrackId.from_base62(track_id_clean)
-        logger.info(f"Fetching audio for track {track_id_clean} from Spotify (max_bytes={max_bytes})...")
-
-        raw_data = None
-        qualities = [AudioQuality.NORMAL, AudioQuality.HIGH, AudioQuality.VERY_HIGH]
-        for attempt, quality in enumerate(qualities, start=1):
-            try:
-                sess = get_session()
-                stream = sess.content_feeder().load(
-                    track_id,
-                    VorbisOnlyAudioQuality(quality),
-                    False,
-                    None,
-                )
-                if stream and stream.input_stream:
-                    if max_bytes:
-                        raw_data = stream.input_stream.stream().read(max_bytes)
-                    else:
-                        raw_data = stream.input_stream.stream().read()
-                    if raw_data:
-                        break
-            except Exception as e:
-                err_msg = str(e)
-                logger.warning(f"Attempt {attempt} ({quality}) failed for {track_id_clean}: {err_msg}")
-                # Only reset session on socket / connection drops, NOT on audio key restrictions
-                if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
-                    reset_session()
+    # 2. Per-track lock ensures simultaneous requests for the same track wait together
+    track_lock = get_track_lock(track_id_clean)
+    with track_lock:
+        with cache_lock:
+            if track_id_clean in track_cache:
+                cached = track_cache[track_id_clean]
+                if max_bytes is None and len(cached) < 1_000_000:
+                    pass
                 else:
-                    import time
-                    time.sleep(0.15)
+                    track_cache.move_to_end(track_id_clean)
+                    return cached
 
-        if not raw_data:
-            raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")
+        # Limit concurrent network fetches across different tracks
+        with fetch_semaphore:
+            track_id = TrackId.from_base62(track_id_clean)
+            logger.info(f"Fetching audio for track {track_id_clean} from Spotify (max_bytes={max_bytes})...")
 
-        # Keep in memory cache (capped to last 50 tracks)
-        if len(track_cache) > 50:
-            oldest = next(iter(track_cache))
-            del track_cache[oldest]
+            raw_data = None
+            qualities = [AudioQuality.NORMAL, AudioQuality.HIGH, AudioQuality.VERY_HIGH]
+            for attempt, quality in enumerate(qualities, start=1):
+                try:
+                    sess = get_session()
+                    stream = sess.content_feeder().load(
+                        track_id,
+                        VorbisOnlyAudioQuality(quality),
+                        False,
+                        None,
+                    )
+                    if stream and stream.input_stream:
+                        if max_bytes:
+                            raw_data = stream.input_stream.stream().read(max_bytes)
+                        else:
+                            raw_data = stream.input_stream.stream().read()
+                        if raw_data:
+                            break
+                except Exception as e:
+                    err_msg = str(e)
+                    logger.warning(f"Attempt {attempt} ({quality}) failed for {track_id_clean}: {err_msg}")
+                    # Only reset session on socket / connection drops, NOT on audio key restrictions
+                    if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
+                        reset_session()
+                    else:
+                        import time
+                        time.sleep(0.15)
 
-        track_cache[track_id_clean] = raw_data
-        logger.info(f"Cached {len(raw_data)} bytes for track {track_id_clean}")
-        return raw_data
+            if not raw_data:
+                raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")
+
+            # LRU Cache Write
+            with cache_lock:
+                while len(track_cache) >= 50:
+                    track_cache.popitem(last=False)
+                track_cache[track_id_clean] = raw_data
+                track_cache.move_to_end(track_id_clean)
+
+            logger.info(f"Cached {len(raw_data)} bytes for track {track_id_clean}")
+            return raw_data
 
 
-def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0, format: str = "wav") -> tuple[bytes, str]:
-    """Uses ffmpeg to slice exact duration and encode to WAV (snippets) or MP3 (full songs) instantly."""
+def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0, format: str = "wav", track_id: Optional[str] = None) -> tuple[bytes, str]:
+    """Uses ffmpeg to slice exact duration and encode to WAV (snippets) or MP3 (full songs) with LRU caching."""
+    cache_key = f"{track_id or hash(raw_vorbis_bytes)}:{duration}:{start_sec}:{format}"
+
+    with cache_lock:
+        if cache_key in sliced_audio_cache:
+            sliced_audio_cache.move_to_end(cache_key)
+            return sliced_audio_cache[cache_key]
+
     if format == "mp3" or duration > 20:
         cmd = [
             "ffmpeg",
@@ -288,7 +317,14 @@ def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0
         logger.error(f"FFmpeg error: {err.decode('utf-8', errors='ignore')}")
         raise HTTPException(status_code=500, detail="FFmpeg encoding error")
 
-    return out, media_type
+    result = (out, media_type)
+    with cache_lock:
+        while len(sliced_audio_cache) >= 100:
+            sliced_audio_cache.popitem(last=False)
+        sliced_audio_cache[cache_key] = result
+        sliced_audio_cache.move_to_end(cache_key)
+
+    return result
 
 
 @app.get("/")
@@ -357,6 +393,7 @@ def health_check():
         "has_credentials": has_creds,
         "authenticated": alive,
         "cached_tracks": len(track_cache),
+        "cached_slices": len(sliced_audio_cache),
     }
 
 
@@ -450,7 +487,7 @@ def submit_oauth_code(payload: CodeSubmitPayload):
 @app.get("/public/playlist")
 @app.get("/api/public-playlist")
 def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL, URI, or ID")):
-    """Fetches Spotify playlist tracks in sub-second time (Cache → Fast Web API → Parallel Mercury → Embed)."""
+    """Fetches Spotify playlist tracks in sub-second time (LRU Cache → Fast Web API → Parallel Mercury → Embed)."""
     import re
     import json
     import requests
@@ -463,10 +500,12 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
     else:
         playlist_id = clean_url.split("?")[0].split("/")[-1]
 
-    # 0. Instant Cache Check (1ms)
-    if playlist_id in playlist_cache:
-        logger.info(f"Returning cached playlist {playlist_id} ({playlist_cache[playlist_id]['total']} tracks)")
-        return playlist_cache[playlist_id]
+    # 0. Instant LRU Cache Check (1ms)
+    with cache_lock:
+        if playlist_id in playlist_cache:
+            playlist_cache.move_to_end(playlist_id)
+            logger.info(f"Returning cached playlist {playlist_id} ({playlist_cache[playlist_id]['total']} tracks)")
+            return playlist_cache[playlist_id]
 
     # 1. Primary Method (Fastest, ~150ms): Spotify Web API using server's minted token
     try:
@@ -493,9 +532,11 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                         "tracks": tracks,
                         "total": len(tracks),
                     }
-                    if len(playlist_cache) > 50:
-                        del playlist_cache[next(iter(playlist_cache))]
-                    playlist_cache[playlist_id] = result
+                    with cache_lock:
+                        while len(playlist_cache) >= 50:
+                            playlist_cache.popitem(last=False)
+                        playlist_cache[playlist_id] = result
+                        playlist_cache.move_to_end(playlist_id)
                     return result
     except Exception as e:
         logger.debug(f"Web API fast playlist fetch failed: {e}")
@@ -566,9 +607,11 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                     "tracks": tracks,
                     "total": len(tracks),
                 }
-                if len(playlist_cache) > 50:
-                    del playlist_cache[next(iter(playlist_cache))]
-                playlist_cache[playlist_id] = result
+                with cache_lock:
+                    while len(playlist_cache) >= 50:
+                        playlist_cache.popitem(last=False)
+                    playlist_cache[playlist_id] = result
+                    playlist_cache.move_to_end(playlist_id)
                 return result
     except Exception as e:
         logger.warning(f"Parallel Mercury playlist fetch failed: {e}")
@@ -638,9 +681,10 @@ def get_snippet(
     start: float = Query(0.0, description="Start offset in seconds"),
 ):
     try:
+        clean_id = uri.replace("spotify:track:", "").strip()
         raw_bytes = get_track_bytes(uri, max_bytes=650 * 1024 if duration <= 20 else None)
         fmt = "wav" if duration <= 20 else "mp3"
-        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=start, format=fmt)
+        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=start, format=fmt, track_id=clean_id)
         return Response(
             content=audio_data,
             media_type=media_type,
@@ -664,8 +708,9 @@ def get_full_track(
     duration: float = Query(30.0, description="Reveal preview duration in seconds"),
 ):
     try:
+        clean_id = uri.replace("spotify:track:", "").strip()
         raw_bytes = get_track_bytes(uri, max_bytes=650 * 1024)
-        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=0.0, format="mp3")
+        audio_data, media_type = slice_audio(raw_bytes, duration=duration, start_sec=0.0, format="mp3", track_id=clean_id)
         return Response(
             content=audio_data,
             media_type=media_type,

@@ -198,8 +198,6 @@ export async function exchangeCode(code) {
 
 export function logout() {
   clearAuthData();
-  localStorage.clear();
-  sessionStorage.clear();
   window.location.replace('/');
 }
 

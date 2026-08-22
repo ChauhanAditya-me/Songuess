@@ -6,10 +6,9 @@ import {
   playSnippet,
   preloadTrack,
   stopPlayback,
-  isAudioServerOnline,
 } from '../spotify/playback';
 
-export function useGame(tracks, playerReady) {
+export function useGame(tracks) {
   const [gameTrack, setGameTrack] = useState(null);
   const [stage, setStage] = useState(0);
   const [status, setStatus] = useState('idle');
@@ -24,9 +23,9 @@ export function useGame(tracks, playerReady) {
   const playedTrackIdsRef = useRef(new Set());
   const unplayableTrackIdsRef = useRef(new Set());
 
-  // Fill the preload queue with 2 tracks ahead of time in background
-  const replenishQueue = useCallback((tracksList = tracks) => {
-    if (!tracksList || tracksList.length === 0) return;
+  // Fill the preload queue with up to 2 tracks ahead of time in background
+  const replenishQueue = useCallback((tracksList = tracks, depth = 0) => {
+    if (!tracksList || tracksList.length === 0 || depth > 5) return;
 
     // Filter out known unplayable tracks
     const playableCandidates = tracksList.filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
@@ -47,7 +46,10 @@ export function useGame(tracks, playerReady) {
           // Track is unplayable on Spotify (e.g. 404 geo-restricted) - discard & blacklist
           unplayableTrackIdsRef.current.add(candidate.id);
           preloadQueueRef.current = preloadQueueRef.current.filter(t => t.id !== candidate.id);
-          replenishQueue(playableCandidates);
+          const remaining = playableCandidates.filter(t => t.id !== candidate.id);
+          if (remaining.length > 0) {
+            replenishQueue(remaining, depth + 1);
+          }
         }
       });
     }
@@ -84,7 +86,7 @@ export function useGame(tracks, playerReady) {
     return next;
   }, [tracks, replenishQueue]);
 
-  const play = useCallback(async (track, targetStage) => {
+  const play = useCallback(async (track, targetStage, retryCount = 0) => {
     const requestId = ++requestRef.current;
 
     setError(null);
@@ -112,13 +114,20 @@ export function useGame(tracks, playerReady) {
         if (track?.id) {
           unplayableTrackIdsRef.current.add(track.id);
         }
+
+        if (retryCount >= 3) {
+          setStatus('idle');
+          setError('Multiple tracks failed to play. Please select a different playlist or check your audio server.');
+          return;
+        }
+
         const next = getNextTrack();
         if (next && next.id !== track?.id) {
           setGameTrack(next);
           setStage(0);
           setGuess('');
           setResult(null);
-          play(next, 0);
+          play(next, 0, retryCount + 1);
         } else {
           setStatus('idle');
           setError('Could not find playable tracks in this playlist.');

@@ -1,6 +1,3 @@
-import { startPlayback } from './api';
-import { getCurrentPlayer, getSpotifyPlayer } from './player';
-
 let resolvedServerUrl = null;
 let serverUrlPromise = null;
 
@@ -22,9 +19,9 @@ export async function getActiveAudioServerUrl() {
       resolvedServerUrl = 'https://songuess.onrender.com';
       return resolvedServerUrl;
     }
-    // On local dev machine: try local 3001 first (with short 200ms timeout)
+    // On local dev machine: try local 3001 first (with fast 250ms timeout)
     try {
-      const res = await fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(200) });
+      const res = await fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(250) });
       if (res.ok) {
         resolvedServerUrl = 'http://127.0.0.1:3001';
         return resolvedServerUrl;
@@ -37,32 +34,8 @@ export async function getActiveAudioServerUrl() {
   return serverUrlPromise;
 }
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 let currentHtmlAudio = null;
 let serverAvailable = null; // null: unknown, true: online, false: offline
-
-let playbackQueue = Promise.resolve();
-let operationId = 0;
-let savedVolume = 0.5;
-
-export function resetPlaybackQueue() {
-  playbackQueue = Promise.resolve();
-  operationId++;
-  savedVolume = 0.5;
-  if (currentHtmlAudio) {
-    try {
-      currentHtmlAudio.pause();
-      currentHtmlAudio = null;
-    } catch {}
-  }
-}
-
-function enqueue(task) {
-  const run = playbackQueue.then(task, task);
-  playbackQueue = run.catch(() => {});
-  return run;
-}
 
 export async function isAudioServerOnline(forceCheck = false) {
   if (!forceCheck && serverAvailable === true) return true;
@@ -128,123 +101,17 @@ export async function fetchPublicPlaylist(playlistUrl) {
   return res.json();
 }
 
-// Reset cached server availability on demand
 export function checkServerStatus() {
   serverAvailable = null;
-  return isAudioServerOnline();
+  return isAudioServerOnline(true);
 }
 
-async function getState(player) {
-  return player.getCurrentState().catch(() => null);
-}
-
-async function waitForState(player, predicate, timeout = 8000) {
-  const started = performance.now();
-
-  while (performance.now() - started < timeout) {
-    const state = await getState(player);
-
-    if (state && predicate(state)) {
-      return state;
-    }
-
-    await sleep(35);
-  }
-
-  return null;
-}
-
-async function pauseConfirmed(player, timeout = 1400) {
-  for (let i = 0; i < 4; i++) {
-    await player.pause().catch(() => {});
-
-    const state = await waitForState(
-      player,
-      current => current.paused === true,
-      timeout / 4
-    );
-
-    if (state?.paused) return true;
-
-    await sleep(25);
-  }
-
-  return false;
-}
-
-async function seekToZero(player) {
-  for (let i = 0; i < 3; i++) {
-    await player.seek(0).catch(() => {});
-
-    const state = await waitForState(
-      player,
-      current => Number(current.position || 0) <= 100,
-      700
-    );
-
-    if (state) return true;
-  }
-
-  return false;
-}
-
-async function setVolume(player, volume) {
-  await player.setVolume(volume).catch(() => {});
-}
-
-async function loadTrackInternal(player, deviceId, uri) {
-  const currentVol = await player.getVolume().catch(() => 0.5);
-  if (currentVol && currentVol > 0.05) {
-    savedVolume = currentVol;
-  } else if (!savedVolume || savedVolume <= 0.05) {
-    savedVolume = 0.5;
-  }
-
-  await setVolume(player, 0);
-  await pauseConfirmed(player);
-
-  let loaded = false;
-  let lastError = null;
-
-  for (let attempt = 0; attempt < 2 && !loaded; attempt++) {
-    try {
-      await startPlayback(deviceId, uri);
-
-      const state = await waitForState(
-        player,
-        current => current.track_window?.current_track?.uri === uri,
-        8000
-      );
-
-      loaded = Boolean(state);
-    } catch (error) {
-      lastError = error;
-      await sleep(150);
-    }
-  }
-
-  if (!loaded) {
-    throw lastError || new Error('Spotify took too long to load the track.');
-  }
-
-  await pauseConfirmed(player);
-  await seekToZero(player);
-  await setVolume(player, savedVolume || 0.5);
-}
-
-export async function ensurePlayer() {
-  const result = await getSpotifyPlayer();
-
-  if (!result.deviceId) {
-    throw new Error('Spotify player device is not available yet.');
-  }
-
-  return result;
-}
-
-// Web Audio API In-Memory Cache for 0ms Replays and Skips
+// Web Audio API In-Memory Cache for 0ms Replays and Instant Snippets
 let audioCtx = null;
-const audioBufferCache = new Map();
+const audioBufferCache = new Map(); // uri -> { buffer, bytes }
+let totalAudioBufferBytes = 0;
+const MAX_CACHE_BYTES = 50 * 1024 * 1024; // 50 MB RAM limit
+
 let currentSourceNode = null;
 let currentPlaybackTimeout = null;
 
@@ -266,7 +133,7 @@ const inFlightPreloads = new Map();
 export async function fetchAndCacheTrackAudio(uri) {
   if (!uri) return null;
   if (audioBufferCache.has(uri)) {
-    return audioBufferCache.get(uri);
+    return audioBufferCache.get(uri).buffer;
   }
   if (inFlightPreloads.has(uri)) {
     return inFlightPreloads.get(uri);
@@ -283,11 +150,18 @@ export async function fetchAndCacheTrackAudio(uri) {
     const ctx = getAudioContext();
     if (ctx) {
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-      if (audioBufferCache.size > 25) {
+      const entryBytes = audioBuffer.length * audioBuffer.numberOfChannels * 4;
+
+      // Evict oldest entries if total cache size exceeds 50MB
+      while (audioBufferCache.size > 0 && totalAudioBufferBytes + entryBytes > MAX_CACHE_BYTES) {
         const firstKey = audioBufferCache.keys().next().value;
+        const entry = audioBufferCache.get(firstKey);
+        totalAudioBufferBytes -= entry.bytes;
         audioBufferCache.delete(firstKey);
       }
-      audioBufferCache.set(uri, audioBuffer);
+
+      audioBufferCache.set(uri, { buffer: audioBuffer, bytes: entryBytes });
+      totalAudioBufferBytes += entryBytes;
       return audioBuffer;
     }
     return null;
@@ -299,8 +173,8 @@ export async function fetchAndCacheTrackAudio(uri) {
   return promise;
 }
 
-/*
- * Prepares a track and caches it into browser RAM in background.
+/**
+ * Preloads a track into browser memory ahead of time.
  */
 export async function preloadTrack(uri) {
   if (!uri) return false;
@@ -316,8 +190,8 @@ export async function loadTrack(uri) {
   return preloadTrack(uri);
 }
 
-/*
- * Plays an exact audio snippet using in-memory Web Audio Buffer (0ms instant replay/skip).
+/**
+ * Plays an exact audio snippet using in-memory Web Audio Buffer (0ms instant playback).
  */
 export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay = () => {}) {
   // Stop previous playback
@@ -326,7 +200,8 @@ export async function playSnippet(uri, seconds, isCurrent = () => true, onPlay =
   const ctx = getAudioContext();
 
   // Try in-memory buffer
-  let buffer = audioBufferCache.get(uri);
+  let cachedEntry = audioBufferCache.get(uri);
+  let buffer = cachedEntry?.buffer;
   if (!buffer) {
     buffer = await fetchAndCacheTrackAudio(uri);
   }
@@ -433,7 +308,7 @@ function killAudioElement(audio) {
 let currentFullTrackId = 0;
 let fullTrackDelayTimer = null;
 
-/*
+/**
  * Plays reveal song audio on the Result (Win / Lost) screens with 0ms instant playback.
  * Uses in-memory Web Audio Buffer first, falling back to fast snippet stream.
  */
@@ -448,7 +323,8 @@ export async function playFullTrack(uri, delayMs = 50) {
 
   // 1. Instant 0ms playback if track audio buffer is already in memory
   const ctx = getAudioContext();
-  const buffer = audioBufferCache.get(uri);
+  const cachedEntry = audioBufferCache.get(uri);
+  const buffer = cachedEntry?.buffer;
   if (ctx && buffer) {
     try {
       const source = ctx.createBufferSource();
@@ -509,7 +385,6 @@ export async function replaySnippet(uri, seconds, isCurrent = () => true) {
 }
 
 export async function stopPlayback() {
-  ++operationId;
   ++currentFullTrackId; // Invalidate any in-flight full track streaming
 
   if (fullTrackDelayTimer) {
@@ -545,12 +420,5 @@ export async function stopPlayback() {
   // Kill any DOM audio elements
   if (typeof document !== 'undefined') {
     document.querySelectorAll('audio').forEach(killAudioElement);
-  }
-
-  const player = getCurrentPlayer();
-  if (player) {
-    try {
-      player.pause().catch(() => {});
-    } catch {}
   }
 }

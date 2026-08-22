@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { playFullTrack, stopPlayback } from '../spotify/playback';
+import { getCoverUrl } from '../utils/getCoverUrl';
 
 export default function LostScreen({ track, onNext, onBackToPlaylists }) {
   useEffect(() => {
@@ -12,14 +13,8 @@ export default function LostScreen({ track, onNext, onBackToPlaylists }) {
       stopPlayback();
     };
   }, [track]);
-  const coverUrl =
-    track?.album?.images?.[0]?.url ||
-    track?.album?.images?.[1]?.url ||
-    track?.album?.images?.[2]?.url ||
-    track?.image_url ||
-    track?.cover_url ||
-    'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80';
 
+  const coverUrl = getCoverUrl(track);
   const artistsText = track?.artists?.map(a => a.name).join(', ') || '';
   const albumName = track?.album?.name || '';
   const subtitle = [artistsText, albumName].filter(Boolean).join(' • ');

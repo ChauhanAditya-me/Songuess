@@ -25,20 +25,39 @@ export async function spotifyFetch(url, options = {}, isRetry = false) {
     }
     const text = await response.text();
     let message = text;
-    try { const data = JSON.parse(text); message = data?.error?.message || data?.error_description || text; } catch {}
+    try {
+      const data = JSON.parse(text);
+      message = data?.error?.message || data?.error_description || text;
+    } catch {}
     throw new Error(message || `Spotify request failed: ${response.status}`);
   }
   return response;
 }
-
 
 export async function getProfile() {
   return (await spotifyFetch('https://api.spotify.com/v1/me')).json();
 }
 
 export async function getPlaylists() {
-  const data = await (await spotifyFetch('https://api.spotify.com/v1/me/playlists?limit=50')).json();
-  return data.items || [];
+  const playlists = [];
+  let url = 'https://api.spotify.com/v1/me/playlists?limit=50';
+  let pages = 0;
+
+  while (url && pages < 3) {
+    try {
+      const res = await spotifyFetch(url);
+      if (!res.ok) break;
+      const data = await res.json();
+      const items = data.items || [];
+      playlists.push(...items);
+      url = data.next;
+      pages++;
+    } catch {
+      break;
+    }
+  }
+
+  return playlists;
 }
 
 export async function getLikedTracks() {
@@ -72,7 +91,6 @@ export async function getLikedTracks() {
 
 /**
  * Helper: raw authenticated fetch that does NOT throw on non-2xx.
- * Returns the Response object so callers can inspect .status / .ok.
  */
 async function rawSpotifyFetch(url) {
   const token = await getValidAccessToken();
@@ -110,64 +128,39 @@ export async function getPlaylistTracks(playlistId) {
     return tracks;
   }
 
-  // Fast Parallel Strategy: Kick off client direct fetch and server fetch concurrently
-  const fetchDirect = async () => {
-    try {
-      const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${playlistId}`);
-      if (res?.ok) {
-        const data = await res.json();
-        const extracted = extractTracks(data?.tracks?.items);
-        if (extracted.length > 0) return extracted;
-      }
-    } catch {}
-
-    try {
-      const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`);
-      if (res?.ok) {
-        const data = await res.json();
-        const extracted = extractTracks(data?.items);
-        if (extracted.length > 0) return extracted;
-      }
-    } catch {}
-
-    return [];
-  };
-
-  const fetchServer = async () => {
-    try {
-      const serverUrl = await getActiveAudioServerUrl();
-      const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.tracks?.length > 0) {
-          return data.tracks;
+  // 1. Try Direct Spotify Web API with access token
+  try {
+    const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50&additional_types=track`);
+    if (res?.ok) {
+      const data = await res.json();
+      const directTracks = extractTracks(data?.items);
+      if (directTracks.length > 0) {
+        if (playlistCache.size > 25) {
+          const firstKey = playlistCache.keys().next().value;
+          playlistCache.delete(firstKey);
         }
+        playlistCache.set(playlistId, directTracks);
+        return directTracks;
       }
-    } catch {}
-    return [];
-  };
-
-  // Run direct and server strategies in parallel for fastest response time
-  const [directTracks, serverTracks] = await Promise.all([fetchDirect(), fetchServer()]);
-  const finalTracks = directTracks.length > 0 ? directTracks : serverTracks;
-
-  if (finalTracks.length > 0) {
-    if (playlistCache.size > 20) {
-      const firstKey = playlistCache.keys().next().value;
-      playlistCache.delete(firstKey);
     }
-    playlistCache.set(playlistId, finalTracks);
-  }
+  } catch {}
 
-  return finalTracks;
-}
+  // 2. Fallback to Audio Server's Spotify Session / Embed Fetcher
+  try {
+    const serverUrl = await getActiveAudioServerUrl();
+    const res = await fetch(`${serverUrl}/public/playlist?url=${encodeURIComponent(playlistId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.tracks?.length > 0) {
+        if (playlistCache.size > 25) {
+          const firstKey = playlistCache.keys().next().value;
+          playlistCache.delete(firstKey);
+        }
+        playlistCache.set(playlistId, data.tracks);
+        return data.tracks;
+      }
+    }
+  } catch {}
 
-export async function startPlayback(deviceId, uri) {
-  if (!deviceId) throw new Error('Spotify player device is not available yet.');
-  const response = await spotifyFetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uris: [uri], position_ms: 0 }),
-  });
-  if (response.status !== 204 && !response.ok) throw new Error('Unable to start Spotify playback.');
+  return [];
 }
