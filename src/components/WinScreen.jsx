@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { playFullTrack, stopPlayback } from '../spotify/playback';
+import { playFullTrack, stopFullTrackPlayback } from '../spotify/playback';
 import { getCoverUrl } from '../utils/getCoverUrl';
 
 export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlaylists }) {
@@ -36,7 +36,7 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
     })();
 
     return () => {
-      stopPlayback();
+      stopFullTrackPlayback();
     };
   }, [track]);
 
@@ -69,7 +69,7 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
           <button
             className="btn-next-song"
             onClick={() => {
-              stopPlayback();
+              stopFullTrackPlayback();
               onNext();
             }}
           >

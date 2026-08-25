@@ -11,6 +11,7 @@ export default function MainGame({
 }) {
   const isPlaying = game.status === 'playing';
   const isLoading = game.status === 'loading';
+  const totalTracks = tracks?.length || 0;
 
   const handlePlayToggle = useCallback(() => {
     if (!game.gameTrack) {
@@ -51,17 +52,25 @@ export default function MainGame({
               <span className="streak-count">{game.streak}</span>
             </div>
           )}
-          {playlistName && <span className="playlist-badge">{playlistName}</span>}
+          {playlistName && <span className="playlist-badge" title={playlistName}>{playlistName}</span>}
+          <span className="songs-count-badge" title={`${totalTracks} songs loaded in this playlist`}>
+            🎵 {totalTracks} {totalTracks === 1 ? 'song' : 'songs'}
+          </span>
         </div>
       </header>
 
       <main className="game-content">
         <div className="game-card">
+          {/* Top Meta Info: Round & Loaded Songs */}
+          <div className="game-card-meta">
+            <span className="game-round-indicator">Song #{game.roundNumber || 1}</span>
+            <span className="game-pool-indicator">🎵 {totalTracks} songs loaded</span>
+          </div>
+
           {/* Top Segmented Progress Bar */}
           <SegmentedProgressBar
             currentStage={game.stage}
             isPlaying={isPlaying}
-            duration={game.snippetSeconds}
           />
 
           {/* Center Circular Play/Pause/Replay Button */}
@@ -92,7 +101,7 @@ export default function MainGame({
                 value={game.guess}
                 onChange={game.setGuess}
                 onSelect={track => {
-                  game.submitGuess(track.name);
+                  game.submitGuess(track);
                 }}
               />
             </div>

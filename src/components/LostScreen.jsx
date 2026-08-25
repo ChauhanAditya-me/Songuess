@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { playFullTrack, stopPlayback } from '../spotify/playback';
+import { playFullTrack, stopFullTrackPlayback } from '../spotify/playback';
 import { getCoverUrl } from '../utils/getCoverUrl';
 
 export default function LostScreen({ track, onNext, onBackToPlaylists }) {
@@ -10,7 +10,7 @@ export default function LostScreen({ track, onNext, onBackToPlaylists }) {
     }
 
     return () => {
-      stopPlayback();
+      stopFullTrackPlayback();
     };
   }, [track]);
 
@@ -44,7 +44,7 @@ export default function LostScreen({ track, onNext, onBackToPlaylists }) {
           <button
             className="btn-next-song btn-lost-next"
             onClick={() => {
-              stopPlayback();
+              stopFullTrackPlayback();
               onNext();
             }}
           >

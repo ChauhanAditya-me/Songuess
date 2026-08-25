@@ -63,31 +63,37 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
   }, []);
 
   function handleKeyDown(event) {
-    if (!results.length) return;
-
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' && results.length > 0) {
       event.preventDefault();
+      setOpen(true);
       setActiveIndex(index =>
         index < results.length - 1 ? index + 1 : 0
       );
+      return;
     }
 
-    if (event.key === 'ArrowUp') {
+    if (event.key === 'ArrowUp' && results.length > 0) {
       event.preventDefault();
+      setOpen(true);
       setActiveIndex(index =>
         index > 0 ? index - 1 : results.length - 1
       );
+      return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
 
-      const track = results[activeIndex];
-
-      if (track) {
-        onSelect(track);
-        setOpen(false);
+      if (results.length > 0) {
+        const track = results[activeIndex] || results[0];
+        if (track) {
+          selectTrack(track);
+          return;
+        }
       }
+
+      setOpen(false);
+      return;
     }
 
     if (event.key === 'Escape') {
@@ -133,6 +139,10 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
                 }`}
                 key={track.id || `${track.name}-${index}`}
                 onMouseEnter={() => setActiveIndex(index)}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // Prevents blur before click
+                  selectTrack(track);
+                }}
                 onClick={() => selectTrack(track)}
               >
                 {cover ? (
@@ -155,9 +165,9 @@ export default function SongSearch({ tracks, value, onChange, onSelect }) {
 
       {open && value && results.length === 0 && (
         <div className="song-search-empty">
-          No songs found
+          No matching songs found in playlist
         </div>
       )}
     </div>
   );
-}
+}

@@ -65,7 +65,7 @@ export async function getLikedTracks() {
   let url = 'https://api.spotify.com/v1/me/tracks?limit=50';
   let pages = 0;
 
-  while (url && pages < 4) {
+  while (url && pages < 6) {
     try {
       const res = await spotifyFetch(url);
       if (!res.ok) break;
@@ -128,20 +128,30 @@ export async function getPlaylistTracks(playlistId) {
     return tracks;
   }
 
-  // 1. Try Direct Spotify Web API with access token
+  // 1. Try Direct Spotify Web API with access token (paginate up to 300 tracks with limit=50)
   try {
-    const res = await rawSpotifyFetch(`https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50&additional_types=track`);
-    if (res?.ok) {
+    let url = `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50&additional_types=track`;
+    const allItems = [];
+    let pages = 0;
+
+    while (url && pages < 6) {
+      const res = await rawSpotifyFetch(url);
+      if (!res?.ok) break;
       const data = await res.json();
-      const directTracks = extractTracks(data?.items);
-      if (directTracks.length > 0) {
-        if (playlistCache.size > 25) {
-          const firstKey = playlistCache.keys().next().value;
-          playlistCache.delete(firstKey);
-        }
-        playlistCache.set(playlistId, directTracks);
-        return directTracks;
+      const items = data?.items || [];
+      allItems.push(...items);
+      url = data?.next;
+      pages++;
+    }
+
+    const directTracks = extractTracks(allItems);
+    if (directTracks.length > 0) {
+      if (playlistCache.size > 25) {
+        const firstKey = playlistCache.keys().next().value;
+        playlistCache.delete(firstKey);
       }
+      playlistCache.set(playlistId, directTracks);
+      return directTracks;
     }
   } catch {}
 

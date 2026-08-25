@@ -123,16 +123,58 @@ body {
   background: rgba(255, 255, 255, 0.05);
   padding: 4px 10px;
   border-radius: 12px;
-  max-width: 180px;
+  max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.songs-count-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--spotify-green);
+  background: rgba(30, 215, 96, 0.1);
+  border: 1px solid rgba(30, 215, 96, 0.25);
+  padding: 4px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.game-card-meta {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+  padding: 0 4px;
+}
+
+.game-round-indicator {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.game-pool-indicator {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
 .game-header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* Streak Badge */
@@ -797,9 +839,45 @@ body {
   text-align: center;
 }
 
-.btn-skip {
+.btn-submit-guess {
   height: 48px;
   padding: 0 20px;
+  background: var(--spotify-green);
+  border: none;
+  border-radius: 24px;
+  color: var(--text-dark);
+  font-family: var(--font-family);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px var(--spotify-green-glow);
+}
+
+.btn-submit-guess:hover:not(:disabled) {
+  background-color: var(--spotify-green-hover);
+  transform: scale(1.04);
+  box-shadow: 0 6px 18px rgba(30, 215, 96, 0.5);
+}
+
+.btn-submit-guess:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-submit-guess:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-skip {
+  height: 48px;
+  padding: 0 18px;
   background: #1f1f1f;
   border: 1px solid #333333;
   border-radius: 24px;

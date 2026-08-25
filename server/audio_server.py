@@ -4,6 +4,7 @@ import subprocess
 import logging
 import threading
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,8 +17,8 @@ from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("audio_server")
 
-# Silence noisy librespot packet debug / protocol chatter
-for noisy_logger in ["librespot", "librespot.core", "librespot.crypto", "librespot.audio"]:
+# Silence noisy librespot packet debug / protocol chatter and connection pool warnings
+for noisy_logger in ["librespot", "librespot.core", "librespot.crypto", "librespot.audio", "urllib3.connectionpool"]:
     logging.getLogger(noisy_logger).setLevel(logging.ERROR)
 
 # Load environment variables
@@ -27,18 +28,8 @@ SPOTIFY_USERNAME = os.getenv("SPOTIFY_USERNAME")
 SPOTIFY_PASSWORD = os.getenv("SPOTIFY_PASSWORD")
 PORT = int(os.getenv("PORT", os.getenv("AUDIO_SERVER_PORT", 3001)))
 
-app = FastAPI(title="Songuess Audio Server")
-
-# Enable CORS for local Vite dev
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 session: Optional[Session] = None
+session_lock = threading.Lock()
 
 # Thread-safe LRU caches
 cache_lock = threading.Lock()
@@ -68,9 +59,6 @@ def run_oauth_worker(oauth_handler: OAuth):
         logger.error(f"Web OAuth background worker failed: {e}")
     finally:
         current_oauth_handler = None
-
-
-session_lock = threading.Lock()
 
 
 def is_session_alive() -> bool:
@@ -174,25 +162,28 @@ def get_session() -> Session:
         )
 
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     try:
         get_session()
     except Exception as e:
         logger.info(f"Startup session check: {e}")
+    yield
 
 
-# Concurrency control: allow up to 3 parallel downloads without exhausting session buffers
-fetch_semaphore = threading.Semaphore(3)
-per_track_locks: dict[str, threading.Lock] = {}
-per_track_meta_lock = threading.Lock()
+app = FastAPI(title="Songuess Audio Server", lifespan=lifespan)
 
+# Enable CORS for local Vite dev
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def get_track_lock(track_id: str) -> threading.Lock:
-    with per_track_meta_lock:
-        if track_id not in per_track_locks:
-            per_track_locks[track_id] = threading.Lock()
-        return per_track_locks[track_id]
+# Librespot socket stream mutex: Ensures audio chunk packets don't interleave over the single TCP socket
+fetch_lock = threading.Lock()
 
 
 def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes:
@@ -209,9 +200,8 @@ def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes
                 track_cache.move_to_end(track_id_clean)
                 return cached
 
-    # 2. Per-track lock ensures simultaneous requests for the same track wait together
-    track_lock = get_track_lock(track_id_clean)
-    with track_lock:
+    # 2. Sequential socket access protects librespot's single TCP connection
+    with fetch_lock:
         with cache_lock:
             if track_id_clean in track_cache:
                 cached = track_cache[track_id_clean]
@@ -221,51 +211,49 @@ def get_track_bytes(raw_track_id: str, max_bytes: Optional[int] = None) -> bytes
                     track_cache.move_to_end(track_id_clean)
                     return cached
 
-        # Limit concurrent network fetches across different tracks
-        with fetch_semaphore:
-            track_id = TrackId.from_base62(track_id_clean)
-            logger.info(f"Fetching audio for track {track_id_clean} from Spotify (max_bytes={max_bytes})...")
+        track_id = TrackId.from_base62(track_id_clean)
+        logger.info(f"Fetching audio for track {track_id_clean} from Spotify (max_bytes={max_bytes})...")
 
-            raw_data = None
-            qualities = [AudioQuality.NORMAL, AudioQuality.HIGH, AudioQuality.VERY_HIGH]
-            for attempt, quality in enumerate(qualities, start=1):
-                try:
-                    sess = get_session()
-                    stream = sess.content_feeder().load(
-                        track_id,
-                        VorbisOnlyAudioQuality(quality),
-                        False,
-                        None,
-                    )
-                    if stream and stream.input_stream:
-                        if max_bytes:
-                            raw_data = stream.input_stream.stream().read(max_bytes)
-                        else:
-                            raw_data = stream.input_stream.stream().read()
-                        if raw_data:
-                            break
-                except Exception as e:
-                    err_msg = str(e)
-                    logger.warning(f"Attempt {attempt} ({quality}) failed for {track_id_clean}: {err_msg}")
-                    # Only reset session on socket / connection drops, NOT on audio key restrictions
-                    if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
-                        reset_session()
+        raw_data = None
+        qualities = [AudioQuality.NORMAL, AudioQuality.HIGH, AudioQuality.VERY_HIGH]
+        for attempt, quality in enumerate(qualities, start=1):
+            try:
+                sess = get_session()
+                stream = sess.content_feeder().load(
+                    track_id,
+                    VorbisOnlyAudioQuality(quality),
+                    False,
+                    None,
+                )
+                if stream and stream.input_stream:
+                    if max_bytes:
+                        raw_data = stream.input_stream.stream().read(max_bytes)
                     else:
-                        import time
-                        time.sleep(0.15)
+                        raw_data = stream.input_stream.stream().read()
+                    if raw_data:
+                        break
+            except Exception as e:
+                err_msg = str(e)
+                logger.warning(f"Attempt {attempt} ({quality}) failed for {track_id_clean}: {err_msg}")
+                # Only reset session on socket / connection drops, NOT on audio key restrictions
+                if "audio key" not in err_msg.lower() and "code: 2" not in err_msg.lower():
+                    reset_session()
+                else:
+                    import time
+                    time.sleep(0.15)
 
-            if not raw_data:
-                raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")
+        if not raw_data:
+            raise HTTPException(status_code=404, detail=f"Track {track_id_clean} is unplayable or restricted in this territory")
 
-            # LRU Cache Write
-            with cache_lock:
-                while len(track_cache) >= 50:
-                    track_cache.popitem(last=False)
-                track_cache[track_id_clean] = raw_data
-                track_cache.move_to_end(track_id_clean)
+        # LRU Cache Write
+        with cache_lock:
+            while len(track_cache) >= 50:
+                track_cache.popitem(last=False)
+            track_cache[track_id_clean] = raw_data
+            track_cache.move_to_end(track_id_clean)
 
-            logger.info(f"Cached {len(raw_data)} bytes for track {track_id_clean}")
-            return raw_data
+        logger.info(f"Cached {len(raw_data)} bytes for track {track_id_clean}")
+        return raw_data
 
 
 def slice_audio(raw_vorbis_bytes: bytes, duration: float, start_sec: float = 0.0, format: str = "wav", track_id: Optional[str] = None) -> tuple[bytes, str]:
@@ -507,41 +495,48 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
             logger.info(f"Returning cached playlist {playlist_id} ({playlist_cache[playlist_id]['total']} tracks)")
             return playlist_cache[playlist_id]
 
-    # 1. Primary Method (Fastest, ~150ms): Spotify Web API using server's minted token
+    # 1. Primary Method (Fastest, ~150ms): Spotify Web API using server's minted token (paginated)
     try:
         token_data = get_web_token()
         token = token_data.get("access_token")
         if token:
-            api_res = requests.get(
-                f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=4,
-            )
-            if api_res.status_code == 200:
+            tracks = []
+            next_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track"
+            pages = 0
+            while next_url and pages < 6:  # Up to 300 tracks
+                api_res = requests.get(
+                    next_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=5,
+                )
+                if api_res.status_code != 200:
+                    break
                 tdata = api_res.json()
-                tracks = []
                 for item in (tdata.get("items") or []):
                     t = item.get("track") or item.get("item") or item
                     if t and t.get("uri") and t.get("name"):
                         tracks.append(t)
-                if tracks:
-                    logger.info(f"Fast-loaded {len(tracks)} tracks for playlist {playlist_id} via Web API")
-                    result = {
-                        "id": playlist_id,
-                        "name": "Spotify Playlist",
-                        "tracks": tracks,
-                        "total": len(tracks),
-                    }
-                    with cache_lock:
-                        while len(playlist_cache) >= 50:
-                            playlist_cache.popitem(last=False)
-                        playlist_cache[playlist_id] = result
-                        playlist_cache.move_to_end(playlist_id)
-                    return result
+                next_url = tdata.get("next")
+                pages += 1
+
+            if tracks:
+                logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via Web API (paginated)")
+                result = {
+                    "id": playlist_id,
+                    "name": "Spotify Playlist",
+                    "tracks": tracks,
+                    "total": len(tracks),
+                }
+                with cache_lock:
+                    while len(playlist_cache) >= 50:
+                        playlist_cache.popitem(last=False)
+                    playlist_cache[playlist_id] = result
+                    playlist_cache.move_to_end(playlist_id)
+                return result
     except Exception as e:
         logger.debug(f"Web API fast playlist fetch failed: {e}")
 
-    # 2. Secondary Method (Parallel Mercury Protocol, ~300ms): Multi-threaded metadata fetch capped to 50
+    # 2. Secondary Method (Parallel Mercury Protocol): Multi-threaded metadata fetch up to 200 tracks
     try:
         sess = get_session()
         from librespot.metadata import PlaylistId as PlId
@@ -549,7 +544,7 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
         pl_data = sess.api().get_playlist(pl_id)
 
         if pl_data and pl_data.contents and pl_data.contents.items:
-            items_to_fetch = [item for item in pl_data.contents.items if item.uri and "track" in item.uri][:50]
+            items_to_fetch = [item for item in pl_data.contents.items if item.uri and "track" in item.uri][:200]
 
             def fetch_single_track(item):
                 uri = item.uri

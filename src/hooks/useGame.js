@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SNIPPET_DURATIONS, LAST_STAGE } from '../game/stages';
-import { pickRandomTrack } from '../game/songSelector';
+import { createShuffledDeck, getPlayableTracks } from '../game/songSelector';
 import { isCorrectGuess } from '../utils/normalizeAnswer';
 import {
   playSnippet,
   preloadTrack,
   stopPlayback,
+  stopFullTrackPlayback,
 } from '../spotify/playback';
 
 export function useGame(tracks) {
@@ -17,51 +18,80 @@ export function useGame(tracks) {
   const [result, setResult] = useState(null);
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
+  const [roundNumber, setRoundNumber] = useState(1);
 
   const requestRef = useRef(0);
-  const preloadQueueRef = useRef([]); // Buffer of preloaded tracks ready in RAM
-  const playedTrackIdsRef = useRef(new Set());
+  const unplayedDeckRef = useRef([]); // Shuffled deck of unplayed tracks for fair non-repeating selection
+  const playedHistoryRef = useRef([]); // Tracks played in current cycle
+  const preloadQueueRef = useRef([]); // Preloaded audio buffer in RAM
   const unplayableTrackIdsRef = useRef(new Set());
+  const lastPlayedTrackIdRef = useRef(null);
+
+  // Draws a track from the shuffled deck, creating a fresh deck when exhausted
+  const drawNextFromDeck = useCallback((tracksList = tracks) => {
+    const playable = getPlayableTracks(tracksList).filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
+    if (!playable.length) return null;
+
+    // If deck is empty, recreate and reshuffle
+    if (!unplayedDeckRef.current.length) {
+      unplayedDeckRef.current = createShuffledDeck(
+        tracksList,
+        unplayableTrackIdsRef.current,
+        lastPlayedTrackIdRef.current
+      );
+      playedHistoryRef.current = [];
+    }
+
+    let candidate = unplayedDeckRef.current.shift();
+    while (candidate && unplayableTrackIdsRef.current.has(candidate.id)) {
+      candidate = unplayedDeckRef.current.shift();
+    }
+
+    if (!candidate && playable.length > 0) {
+      unplayedDeckRef.current = createShuffledDeck(
+        tracksList,
+        unplayableTrackIdsRef.current,
+        lastPlayedTrackIdRef.current
+      );
+      candidate = unplayedDeckRef.current.shift();
+    }
+
+    return candidate || null;
+  }, [tracks]);
 
   // Fill the preload queue with up to 2 tracks ahead of time in background
   const replenishQueue = useCallback((tracksList = tracks, depth = 0) => {
     if (!tracksList || tracksList.length === 0 || depth > 5) return;
 
-    // Filter out known unplayable tracks
-    const playableCandidates = tracksList.filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
-    if (!playableCandidates.length) return;
-
     while (preloadQueueRef.current.length < 2) {
-      // Pick a track not recently played
-      let candidate = pickRandomTrack(playableCandidates);
-      for (let i = 0; i < 6 && (playedTrackIdsRef.current.has(candidate?.id) || preloadQueueRef.current.some(t => t.id === candidate?.id)); i++) {
-        candidate = pickRandomTrack(playableCandidates);
-      }
-      if (!candidate) candidate = pickRandomTrack(playableCandidates);
+      const candidate = drawNextFromDeck(tracksList);
       if (!candidate) break;
 
       preloadQueueRef.current.push(candidate);
       preloadTrack(candidate.uri).then((ok) => {
         if (!ok) {
-          // Track is unplayable on Spotify (e.g. 404 geo-restricted) - discard & blacklist
+          // Track is unplayable (e.g. 404 geo-restricted) - blacklist and discard
           unplayableTrackIdsRef.current.add(candidate.id);
           preloadQueueRef.current = preloadQueueRef.current.filter(t => t.id !== candidate.id);
-          const remaining = playableCandidates.filter(t => t.id !== candidate.id);
-          if (remaining.length > 0) {
-            replenishQueue(remaining, depth + 1);
-          }
+          replenishQueue(tracksList, depth + 1);
         }
       });
     }
-  }, [tracks]);
+  }, [tracks, drawNextFromDeck]);
 
-  // Initial fill when playlist changes
+  // Initial setup when playlist tracks change
   useEffect(() => {
-    preloadQueueRef.current = [];
-    playedTrackIdsRef.current = new Set();
     unplayableTrackIdsRef.current = new Set();
+    playedHistoryRef.current = [];
+    preloadQueueRef.current = [];
+    lastPlayedTrackIdRef.current = null;
+    setRoundNumber(1);
+
     if (tracks?.length) {
+      unplayedDeckRef.current = createShuffledDeck(tracks, unplayableTrackIdsRef.current);
       replenishQueue(tracks);
+    } else {
+      unplayedDeckRef.current = [];
     }
   }, [tracks, replenishQueue]);
 
@@ -70,21 +100,20 @@ export function useGame(tracks) {
     while (next && unplayableTrackIdsRef.current.has(next.id)) {
       next = preloadQueueRef.current.shift();
     }
+
     if (!next) {
-      const playable = tracks?.filter(t => t?.id && !unplayableTrackIdsRef.current.has(t.id));
-      next = pickRandomTrack(playable?.length ? playable : tracks);
+      next = drawNextFromDeck(tracks);
     }
+
     if (next) {
-      playedTrackIdsRef.current.add(next.id);
-      if (playedTrackIdsRef.current.size > 25) {
-        const oldest = playedTrackIdsRef.current.values().next().value;
-        playedTrackIdsRef.current.delete(oldest);
-      }
+      lastPlayedTrackIdRef.current = next.id;
+      playedHistoryRef.current.push(next.id);
     }
-    // Replenish the background queue immediately
+
+    // Keep the preload buffer full
     replenishQueue(tracks);
     return next;
-  }, [tracks, replenishQueue]);
+  }, [tracks, drawNextFromDeck, replenishQueue]);
 
   const play = useCallback(async (track, targetStage, retryCount = 0) => {
     const requestId = ++requestRef.current;
@@ -117,7 +146,7 @@ export function useGame(tracks) {
 
         if (retryCount >= 3) {
           setStatus('idle');
-          setError('Multiple tracks failed to play. Please select a different playlist or check your audio server.');
+          setError('Multiple tracks failed to play. Please choose another playlist.');
           return;
         }
 
@@ -148,6 +177,7 @@ export function useGame(tracks) {
     setStage(0);
     setGuess('');
     setResult(null);
+    setRoundNumber(1);
 
     await play(track, 0);
   }, [getNextTrack, play]);
@@ -177,16 +207,34 @@ export function useGame(tracks) {
 
   const [guessedSeconds, setGuessedSeconds] = useState(0);
 
-  const submitGuess = useCallback(async (customGuessText = null) => {
-    const guessText = customGuessText || guess;
+  const submitGuess = useCallback(async (guessInput = null) => {
+    const guessValue = guessInput || guess;
 
-    if (!gameTrack || !['playing', 'paused', 'loading'].includes(status)) {
+    if (!gameTrack) {
       return;
     }
 
-    if (isCorrectGuess(guessText, gameTrack)) {
+    let isCorrect = false;
+
+    // 1. Direct object / ID match (when selected from search dropdown)
+    if (guessValue && typeof guessValue === 'object') {
+      if (
+        (guessValue.id && gameTrack.id && guessValue.id === gameTrack.id) ||
+        (guessValue.uri && gameTrack.uri && guessValue.uri === gameTrack.uri)
+      ) {
+        isCorrect = true;
+      } else if (guessValue.name) {
+        isCorrect = isCorrectGuess(guessValue.name, gameTrack);
+      }
+    } else if (typeof guessValue === 'string' && guessValue.trim()) {
+      // 2. String text match (when typed or submitted as text)
+      isCorrect = isCorrectGuess(guessValue.trim(), gameTrack);
+    }
+
+    if (isCorrect) {
       ++requestRef.current;
-      stopPlayback().catch(() => {});
+      stopFullTrackPlayback();
+      stopPlayback();
 
       const wonAtSeconds = SNIPPET_DURATIONS[stage];
       setGuessedSeconds(wonAtSeconds);
@@ -198,7 +246,7 @@ export function useGame(tracks) {
     } else {
       setResult('wrong');
     }
-  }, [gameTrack, guess, status, stage]);
+  }, [gameTrack, guess, stage]);
 
   const stop = useCallback(async () => {
     ++requestRef.current;
@@ -207,8 +255,8 @@ export function useGame(tracks) {
   }, []);
 
   const nextRound = useCallback(async () => {
-    const requestId = ++requestRef.current;
-    await stopPlayback();
+    stopFullTrackPlayback();
+    stopPlayback();
 
     const track = getNextTrack();
 
@@ -219,12 +267,11 @@ export function useGame(tracks) {
       return;
     }
 
-    if (requestId !== requestRef.current) return;
-
     setGameTrack(track);
     setStage(0);
     setGuess('');
     setResult(null);
+    setRoundNumber(r => r + 1);
 
     await play(track, 0);
   }, [getNextTrack, play]);
@@ -240,12 +287,20 @@ export function useGame(tracks) {
     setGuess('');
     setScore(0);
     setStreak(0);
+    setRoundNumber(1);
     setError(null);
     preloadQueueRef.current = [];
+    playedHistoryRef.current = [];
+    unplayableTrackIdsRef.current = new Set();
+    lastPlayedTrackIdRef.current = null;
+
     if (tracks?.length) {
+      unplayedDeckRef.current = createShuffledDeck(tracks, unplayableTrackIdsRef.current);
       replenishQueue(tracks);
     }
   }, [tracks, replenishQueue]);
+
+  const totalPlayableTracks = getPlayableTracks(tracks).length;
 
   return {
     gameTrack,
@@ -259,6 +314,8 @@ export function useGame(tracks) {
     result,
     score,
     streak,
+    roundNumber,
+    totalPlayableTracks,
     start,
     replay,
     skip,
