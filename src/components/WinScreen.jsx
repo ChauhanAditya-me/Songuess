@@ -10,38 +10,43 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
       playFullTrack(track.uri);
     }
 
-    // Natural randomized celebratory edge confetti burst
-    const colors = ['#1ed760', '#ffffff', '#22e570', '#88ffbb', '#10b981', '#6ee7b7'];
-    const randomInRange = (min, max) => Math.random() * (max - min) + min;
+    // Realistic multi-tier celebratory confetti burst
+    const colors = ['#15c853', '#00e732', '#b4ffc7', '#ffffff'];
+    const count = 200;
+    const defaults = {
+      origin: { y: 0.7 },
+      colors: colors,
+    };
 
-    // Left side pop
-    confetti({
-      particleCount: Math.floor(randomInRange(35, 100)),
-      angle: randomInRange(50, 75),
-      spread: randomInRange(35, 65),
-      startVelocity: randomInRange(40, 58),
-      origin: { x: randomInRange(0.02, 0.12), y: randomInRange(0.68, 0.76) },
-      colors,
-      ticks: 220,
-      gravity: 1.05,
-      decay: 0.92,
-      scalar: randomInRange(0.85, 1.15),
-      drift: randomInRange(-0.4, 0.6),
+    function fire(particleRatio, opts) {
+      confetti({
+        ...defaults,
+        ...opts,
+        particleCount: Math.floor(count * particleRatio),
+      });
+    }
+
+    fire(0.25, {
+      spread: 26,
+      startVelocity: 55,
     });
-
-    // Right side pop
-    confetti({
-      particleCount: Math.floor(randomInRange(35, 50)),
-      angle: randomInRange(105, 130),
-      spread: randomInRange(65, 95),
-      startVelocity: randomInRange(40, 58),
-      origin: { x: randomInRange(0.88, 0.98), y: randomInRange(0.68, 0.76) },
-      colors,
-      ticks: 220,
-      gravity: 1.05,
+    fire(0.2, {
+      spread: 60,
+    });
+    fire(0.35, {
+      spread: 150,
+      decay: 0.91,
+      scalar: 0.8,
+    });
+    fire(0.1, {
+      spread: 120,
+      startVelocity: 25,
       decay: 0.92,
-      scalar: randomInRange(0.85, 1.15),
-      drift: randomInRange(-0.6, 0.4),
+      scalar: 1.2,
+    });
+    fire(0.1, {
+      spread: 120,
+      startVelocity: 45,
     });
 
     return () => {
