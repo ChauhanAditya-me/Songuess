@@ -10,13 +10,30 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
       playFullTrack(track.uri);
     }
 
-    // Trigger a single celebratory confetti pop
-    confetti({
-      particleCount: 50,
-      spread: 65,
-      origin: { y: 0.65 },
-      colors: ['#1ed760', '#ffffff', '#22e570', '#88ffbb'],
-    });
+    // Quick celebratory edge confetti burst
+    const end = Date.now() + 400;
+    const colors = ['#1ed760', '#ffffff', '#22e570', '#88ffbb'];
+
+    (function frame() {
+      confetti({
+        particleCount: 3,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0, y: 0.7 },
+        colors: colors,
+      });
+      confetti({
+        particleCount: 3,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1, y: 0.7 },
+        colors: colors,
+      });
+
+      if (Date.now() < end) {
+        requestAnimationFrame(frame);
+      }
+    })();
 
     return () => {
       stopFullTrackPlayback();
