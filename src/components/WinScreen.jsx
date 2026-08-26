@@ -10,30 +10,39 @@ export default function WinScreen({ track, guessedSeconds, onNext, onBackToPlayl
       playFullTrack(track.uri);
     }
 
-    // Quick celebratory edge confetti burst
-    const end = Date.now() + 400;
-    const colors = ['#1ed760', '#ffffff', '#22e570', '#88ffbb'];
+    // Natural randomized celebratory edge confetti burst
+    const colors = ['#1ed760', '#ffffff', '#22e570', '#88ffbb', '#10b981', '#6ee7b7'];
+    const randomInRange = (min, max) => Math.random() * (max - min) + min;
 
-    (function frame() {
-      confetti({
-        particleCount: 3,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0, y: 0.7 },
-        colors: colors,
-      });
-      confetti({
-        particleCount: 3,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1, y: 0.7 },
-        colors: colors,
-      });
+    // Left side pop
+    confetti({
+      particleCount: Math.floor(randomInRange(35, 100)),
+      angle: randomInRange(50, 75),
+      spread: randomInRange(35, 65),
+      startVelocity: randomInRange(40, 58),
+      origin: { x: randomInRange(0.02, 0.12), y: randomInRange(0.68, 0.76) },
+      colors,
+      ticks: 220,
+      gravity: 1.05,
+      decay: 0.92,
+      scalar: randomInRange(0.85, 1.15),
+      drift: randomInRange(-0.4, 0.6),
+    });
 
-      if (Date.now() < end) {
-        requestAnimationFrame(frame);
-      }
-    })();
+    // Right side pop
+    confetti({
+      particleCount: Math.floor(randomInRange(35, 50)),
+      angle: randomInRange(105, 130),
+      spread: randomInRange(65, 95),
+      startVelocity: randomInRange(40, 58),
+      origin: { x: randomInRange(0.88, 0.98), y: randomInRange(0.68, 0.76) },
+      colors,
+      ticks: 220,
+      gravity: 1.05,
+      decay: 0.92,
+      scalar: randomInRange(0.85, 1.15),
+      drift: randomInRange(-0.6, 0.4),
+    });
 
     return () => {
       stopFullTrackPlayback();
