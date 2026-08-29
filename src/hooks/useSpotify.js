@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getProfile, getPlaylists, getPlaylistTracks } from '../spotify/api';
+import { fetchPublicPlaylist } from '../spotify/playback';
 import { isAuthenticated } from '../spotify/auth';
 
 export function useSpotify() {
@@ -47,13 +48,42 @@ export function useSpotify() {
     setTracks([]);
     setLoadingTracks(true);
     setError(null);
-    try { setTracks(await getPlaylistTracks(playlist.id)); }
-    catch (e) { setError(e.message); }
-    finally { setLoadingTracks(false); }
+    try {
+      setTracks(await getPlaylistTracks(playlist.id));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoadingTracks(false);
+    }
   }
 
-  function loadCustomTracks(name, trackList) {
-    setSelectedPlaylist({ name, id: 'custom' });
+  async function loadPublicPlaylist(urlOrId) {
+    setTracks([]);
+    setLoadingTracks(true);
+    setError(null);
+    try {
+      const data = await fetchPublicPlaylist(urlOrId);
+      if (!data?.tracks || data.tracks.length === 0) {
+        throw new Error('No playable tracks found in this playlist.');
+      }
+      setSelectedPlaylist({
+        id: data.id || 'public-playlist',
+        name: data.name || 'Public Playlist',
+        isGuest: true,
+        images: data.images || [],
+      });
+      setTracks(data.tracks);
+      return data;
+    } catch (e) {
+      setError(e.message || 'Failed to load public playlist.');
+      throw e;
+    } finally {
+      setLoadingTracks(false);
+    }
+  }
+
+  function loadCustomTracks(name, trackList, images = []) {
+    setSelectedPlaylist({ name, id: 'custom', isGuest: true, images });
     setTracks(trackList);
     setLoadingTracks(false);
     setError(null);
@@ -62,6 +92,7 @@ export function useSpotify() {
   function resetPlaylist() {
     setSelectedPlaylist(null);
     setTracks([]);
+    setError(null);
   }
 
   return {
@@ -73,8 +104,8 @@ export function useSpotify() {
     loadingTracks,
     error,
     loadPlaylist,
+    loadPublicPlaylist,
     loadCustomTracks,
     resetPlaylist,
   };
 }
-

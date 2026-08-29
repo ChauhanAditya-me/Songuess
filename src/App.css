@@ -352,36 +352,36 @@ body {
   font-size: 1.1rem;
 }
 
-/* Guest button (placeholder) */
+/* Active Guest Button */
 .btn-guest {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-white);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 30px;
-  height: 50px;
+  height: 52px;
   padding: 0 28px;
   font-size: 0.95rem;
   font-weight: 600;
   font-family: var(--font-family);
-  cursor: not-allowed;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  opacity: 0.5;
-  transition: opacity 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   width: 100%;
+  backdrop-filter: blur(10px);
 }
 
-.coming-soon-tag {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  background: rgba(255, 255, 255, 0.1);
-  padding: 2px 8px;
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.4);
+.btn-guest:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: scale(1.03);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.btn-guest:active {
+  transform: scale(0.98);
 }
 
 /* ==========================================================================
@@ -1108,4 +1108,346 @@ body {
     width: 86px;
     height: 86px;
   }
+}
+
+/* ==========================================================================
+   CUSTOM PLAYLIST CARD
+   ========================================================================== */
+.playlist-card-custom {
+  background: #181818;
+  color: var(--text-white);
+  border: 1px solid rgba(30, 215, 96, 0.35);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.playlist-card-custom:hover {
+  background: #222222;
+  border-color: var(--spotify-green);
+  box-shadow: 0 6px 22px rgba(30, 215, 96, 0.25);
+  transform: translateY(-2px);
+}
+
+.playlist-card-custom .custom-cover-icon {
+  background: rgba(30, 215, 96, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  border: 1px solid rgba(30, 215, 96, 0.3);
+}
+
+/* ==========================================================================
+   GUEST MODAL
+   ========================================================================== */
+.guest-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 9999;
+  animation: fadeInModal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInModal {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.guest-modal-card {
+  width: 100%;
+  max-width: 560px;
+  background: #141414;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(30, 215, 96, 0.08);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.guest-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.guest-badge-pill {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(30, 215, 96, 0.15);
+  color: var(--spotify-green);
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: inline-block;
+  margin-bottom: 8px;
+  border: 1px solid rgba(30, 215, 96, 0.25);
+}
+
+.guest-modal-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-white);
+  margin-bottom: 4px;
+}
+
+.guest-modal-subtitle {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.btn-modal-close {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.btn-modal-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+/* Input Form */
+.guest-input-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.guest-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.guest-input-icon {
+  position: absolute;
+  left: 16px;
+  pointer-events: none;
+}
+
+.guest-url-input {
+  width: 100%;
+  height: 52px;
+  background: #1e1e1e;
+  border: 1.5px solid #2e2e2e;
+  border-radius: 14px;
+  padding: 0 75px 0 46px;
+  color: #ffffff;
+  font-family: var(--font-family);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.guest-url-input:focus {
+  border-color: var(--spotify-green);
+  box-shadow: 0 0 0 3px rgba(30, 215, 96, 0.2);
+}
+
+.btn-paste-clipboard {
+  position: absolute;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-paste-clipboard:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.btn-guest-submit {
+  background: var(--spotify-green);
+  color: var(--text-dark);
+  border: none;
+  border-radius: 14px;
+  height: 50px;
+  font-size: 1rem;
+  font-weight: 700;
+  font-family: var(--font-family);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 4px 16px var(--spotify-green-glow);
+}
+
+.btn-guest-submit:hover:not(:disabled) {
+  background: var(--spotify-green-hover);
+  transform: scale(1.02);
+}
+
+.btn-guest-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.guest-error-box {
+  background: rgba(255, 75, 75, 0.12);
+  border: 1px solid rgba(255, 75, 75, 0.3);
+  color: #ff6b6b;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.guest-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: #666;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 6px 0 16px;
+}
+
+.guest-divider::before,
+.guest-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #282828;
+}
+
+.guest-divider span {
+  padding: 0 12px;
+}
+
+/* Quick-Pick Grid */
+.guest-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .guest-quick-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.guest-quick-card {
+  background: #1a1a1a;
+  border: 1px solid #282828;
+  border-radius: 14px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  color: inherit;
+  font-family: var(--font-family);
+}
+
+.guest-quick-card:hover:not(:disabled) {
+  background: #242424;
+  border-color: rgba(30, 215, 96, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.guest-card-cover-wrapper {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.guest-card-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.guest-card-play-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 215, 96, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.guest-quick-card:hover .guest-card-play-overlay,
+.guest-quick-card.loading .guest-card-play-overlay {
+  opacity: 1;
+}
+
+.guest-card-info {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.guest-card-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guest-card-desc {
+  font-size: 0.72rem;
+  color: #888888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.spinner-ring-small {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid rgba(0, 0, 0, 0.2);
+  border-top-color: #000000;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }

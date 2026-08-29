@@ -1,7 +1,7 @@
 import React from 'react';
 import { SpotifyIcon } from './Icons';
 
-export default function LandingPage({ onConnect, onPlay, isLoggedIn, error, profileName }) {
+export default function LandingPage({ onConnect, onPlay, onPlayGuest, isLoggedIn, error, profileName }) {
   return (
     <div className="landing-screen">
       <header className="brand-header">
@@ -39,9 +39,8 @@ export default function LandingPage({ onConnect, onPlay, isLoggedIn, error, prof
                 <span>Play</span>
               </button>
 
-              <button className="btn-guest" disabled title="Coming soon">
-                <span>Play as Guest</span>
-                <span className="coming-soon-tag">Soon</span>
+              <button className="btn-guest" onClick={onPlayGuest} title="Play any playlist as guest">
+                <span>Play Custom Playlist</span>
               </button>
             </>
           ) : (
@@ -51,9 +50,8 @@ export default function LandingPage({ onConnect, onPlay, isLoggedIn, error, prof
                 <span>Connect with Spotify</span>
               </button>
 
-              <button className="btn-guest" disabled title="Coming soon">
+              <button className="btn-guest" onClick={onPlayGuest} title="Play as guest without login">
                 <span>Play as Guest</span>
-                <span className="coming-soon-tag">Soon</span>
               </button>
             </>
           )}

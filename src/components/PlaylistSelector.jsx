@@ -1,7 +1,7 @@
 import React from 'react';
 import { LogoutIcon } from './Icons';
 
-export default function PlaylistSelector({ playlists, onSelectPlaylist, onLogout, onBack, profile }) {
+export default function PlaylistSelector({ playlists, onSelectPlaylist, onOpenCustomModal, onLogout, onBack, profile }) {
   return (
     <div className="playlist-screen">
       <header className="brand-header">
@@ -22,6 +22,22 @@ export default function PlaylistSelector({ playlists, onSelectPlaylist, onLogout
         <h1 className="playlist-heading">Choose your playlist</h1>
 
         <div className="playlist-list">
+          {/* Custom Link / Guest Modal Trigger */}
+          {onOpenCustomModal && (
+            <button
+              className="playlist-card playlist-card-custom"
+              onClick={onOpenCustomModal}
+              title="Paste any public Spotify link"
+            >
+              <div className="playlist-card-cover custom-cover-icon">
+                <span>🔗</span>
+              </div>
+              <div className="playlist-card-meta">
+                <span className="playlist-title">Paste Any Playlist Link</span>
+                <span className="playlist-subtitle">Play any public Spotify playlist</span>
+              </div>
+            </button>
+          )}
           {playlists.map(playlist => {
             const imageUrl =
               playlist.images?.[0]?.url ||

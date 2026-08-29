@@ -500,6 +500,21 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
         token_data = get_web_token()
         token = token_data.get("access_token")
         if token:
+            playlist_name = "Spotify Playlist"
+            playlist_images = []
+            try:
+                meta_res = requests.get(
+                    f"https://api.spotify.com/v1/playlists/{playlist_id}?fields=name,images,description",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=4,
+                )
+                if meta_res.status_code == 200:
+                    meta_data = meta_res.json()
+                    playlist_name = meta_data.get("name") or playlist_name
+                    playlist_images = meta_data.get("images") or []
+            except Exception:
+                pass
+
             tracks = []
             next_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50&additional_types=track"
             pages = 0
@@ -520,10 +535,11 @@ def get_public_playlist(url: str = Query(..., description="Spotify Playlist URL,
                 pages += 1
 
             if tracks:
-                logger.info(f"Loaded {len(tracks)} tracks for playlist {playlist_id} via Web API (paginated)")
+                logger.info(f"Loaded {len(tracks)} tracks for playlist '{playlist_name}' ({playlist_id}) via Web API (paginated)")
                 result = {
                     "id": playlist_id,
-                    "name": "Spotify Playlist",
+                    "name": playlist_name,
+                    "images": playlist_images,
                     "tracks": tracks,
                     "total": len(tracks),
                 }

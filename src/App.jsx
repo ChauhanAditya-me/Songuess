@@ -4,6 +4,7 @@ import { useSpotify } from './hooks/useSpotify';
 import { useGame } from './hooks/useGame';
 import LandingPage from './components/LandingPage';
 import PlaylistSelector from './components/PlaylistSelector';
+import GuestModal from './components/GuestModal';
 import MainGame from './components/MainGame';
 import WinScreen from './components/WinScreen';
 import LostScreen from './components/LostScreen';
@@ -77,6 +78,7 @@ function Callback({ code }) {
 
 function Home() {
   const [showHome, setShowHome] = useState(true);
+  const [showGuestModal, setShowGuestModal] = useState(false);
   const spotify = useSpotify();
   const game = useGame(spotify.tracks);
 
@@ -103,6 +105,13 @@ function Home() {
     game.reset();
     spotify.resetPlaylist();
     setShowHome(true);
+    setShowGuestModal(false);
+  };
+
+  const handleLoadGuestPlaylist = async (urlOrId) => {
+    await spotify.loadPublicPlaylist(urlOrId);
+    setShowGuestModal(false);
+    setShowHome(false);
   };
 
   const isLoggedIn = !spotify.loading && spotify.profile;
@@ -119,9 +128,10 @@ function Home() {
       )}
 
       {/* 2. Landing Screen — logged-out */}
-      {isLoggedOut && (
+      {isLoggedOut && !spotify.selectedPlaylist && (
         <LandingPage
           onConnect={beginSpotifyLogin}
+          onPlayGuest={() => setShowGuestModal(true)}
           isLoggedIn={false}
           error={spotify.error}
         />
@@ -131,24 +141,34 @@ function Home() {
       {isLoggedIn && showHome && !spotify.selectedPlaylist && (
         <LandingPage
           onPlay={() => setShowHome(false)}
+          onPlayGuest={() => setShowGuestModal(true)}
           isLoggedIn={true}
           profileName={spotify.profile.display_name}
           error={spotify.error}
         />
       )}
 
-      {/* 4. Playlist Selector Screen */}
+      {/* 4. Playlist Selector Screen (for logged in users) */}
       {isLoggedIn && !showHome && !spotify.selectedPlaylist && (
         <PlaylistSelector
           playlists={spotify.playlists}
           onSelectPlaylist={playlist => spotify.loadPlaylist(playlist)}
+          onOpenCustomModal={() => setShowGuestModal(true)}
           onLogout={logout}
           onBack={() => setShowHome(true)}
           profile={spotify.profile}
         />
       )}
 
-      {/* 5. Loading Playlist Tracks State */}
+      {/* 5. Guest Modal (for pasting links or picking curated charts) */}
+      {showGuestModal && (
+        <GuestModal
+          onClose={() => setShowGuestModal(false)}
+          onLoadPlaylist={handleLoadGuestPlaylist}
+        />
+      )}
+
+      {/* 6. Loading Playlist Tracks State */}
       {!spotify.loading && spotify.selectedPlaylist && spotify.loadingTracks && (
         <div className="loading-screen">
           <div className="loading-pulse-disc">🎵</div>
@@ -156,7 +176,7 @@ function Home() {
         </div>
       )}
 
-      {/* 6. Playlist Load Error State */}
+      {/* 7. Playlist Load Error State */}
       {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length === 0 && (
         <div className="loading-screen">
           <div className="loading-pulse-disc">⚠️</div>
@@ -167,14 +187,14 @@ function Home() {
           <button
             className="btn-spotify-connect"
             style={{ marginTop: '24px' }}
-            onClick={handleBackToPlaylists}
+            onClick={isLoggedIn ? handleBackToPlaylists : handleBackToHome}
           >
-            Choose Another Playlist
+            {isLoggedIn ? 'Choose Another Playlist' : 'Try Another Playlist'}
           </button>
         </div>
       )}
 
-      {/* 7. Active Game / Results */}
+      {/* 8. Active Game / Results */}
       {!spotify.loading && spotify.selectedPlaylist && !spotify.loadingTracks && spotify.tracks.length > 0 && (
         <>
           {game.result === 'correct' && (
