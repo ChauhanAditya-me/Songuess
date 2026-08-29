@@ -7,42 +7,48 @@ const CURATED_PLAYLISTS = [
     url: 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
     name: "Today's Top Hits",
     description: 'The biggest hits right now across the globe',
-    cover: 'https://i.scdn.co/image/ab67706f00000002b6045610cfb3f9ff74c66fc0',
+    icon: '🔥',
+    gradient: 'linear-gradient(135deg, #ff0844 0%, #ffb199 100%)',
   },
   {
     id: '37i9dQZF1DX5Ejj0EkURtP',
     url: 'https://open.spotify.com/playlist/37i9dQZF1DX5Ejj0EkURtP',
     name: 'All Out 2010s',
     description: 'The defining pop and rock tracks of the 2010s',
-    cover: 'https://i.scdn.co/image/ab67706f000000021666ff054ec5a81e3a61f435',
+    icon: '✨',
+    gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
   },
   {
     id: '37i9dQZF1DWXRqgorJj26U',
     url: 'https://open.spotify.com/playlist/37i9dQZF1DWXRqgorJj26U',
     name: 'Rock Classics',
     description: 'Timeless guitar anthems & legend tracks',
-    cover: 'https://i.scdn.co/image/ab67706f0000000204ae05d3b66ebcfd3883bc29',
+    icon: '🎸',
+    gradient: 'linear-gradient(135deg, #f12711 0%, #f5af19 100%)',
   },
   {
     id: '37i9dQZF1DWUa8ZRTfalHk',
     url: 'https://open.spotify.com/playlist/37i9dQZF1DWUa8ZRTfalHk',
     name: 'Pop Rising',
     description: 'Who is next in pop music today',
-    cover: 'https://i.scdn.co/image/ab67706f000000024bbdc51ae8c9a35123d4554b',
+    icon: '🌟',
+    gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
   },
   {
     id: '37i9dQZF1DXbYM3nMM0oPk',
     url: 'https://open.spotify.com/playlist/37i9dQZF1DXbYM3nMM0oPk',
     name: 'Mega Hit Mix',
     description: 'A non-stop mix of top chart-topping tunes',
-    cover: 'https://i.scdn.co/image/ab67706f0000000222019488a09b433cf9f14371',
+    icon: '⚡',
+    gradient: 'linear-gradient(135deg, #8a2387 0%, #e94057 50%, #f27121 100%)',
   },
   {
     id: '37i9dQZEVXbMDoHDwVN2tF',
     url: 'https://open.spotify.com/playlist/37i9dQZEVXbMDoHDwVN2tF',
     name: 'Top 50 - Global',
     description: 'Your daily update of the most played tracks',
-    cover: 'https://i.scdn.co/image/ab67706c0000da84fc11894d3090623a96860ec4',
+    icon: '🌍',
+    gradient: 'linear-gradient(135deg, #1ed760 0%, #0d7334 100%)',
   },
 ];
 
@@ -75,7 +81,6 @@ export default function GuestModal({ onClose, onLoadPlaylist }) {
 
     try {
       await onLoadPlaylist(target);
-      // Navigation/game start is handled by parent upon success
     } catch (err) {
       setError(err.message || 'Could not load playlist. Make sure the link is public.');
       setLoading(false);
@@ -91,7 +96,7 @@ export default function GuestModal({ onClose, onLoadPlaylist }) {
         setError(null);
       }
     } catch {
-      // Clipboard permissions denied or unavailable
+      // Clipboard permissions unavailable
     }
   }
 
@@ -185,16 +190,11 @@ export default function GuestModal({ onClose, onLoadPlaylist }) {
                 onClick={() => handleLoad(pl.url, pl.id)}
                 disabled={loading}
               >
-                <div className="guest-card-cover-wrapper">
-                  <img
-                    src={pl.cover}
-                    alt={pl.name}
-                    className="guest-card-cover"
-                    loading="lazy"
-                    onError={e => {
-                      e.target.src = 'https://placehold.co/120x120/181818/ffffff?text=🎵';
-                    }}
-                  />
+                <div
+                  className="guest-card-cover-wrapper"
+                  style={{ background: pl.gradient }}
+                >
+                  <span className="guest-card-icon">{pl.icon}</span>
                   <div className="guest-card-play-overlay">
                     {isThisLoading ? (
                       <div className="spinner-ring-small" />

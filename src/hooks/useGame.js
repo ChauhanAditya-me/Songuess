@@ -195,7 +195,7 @@ export function useGame(tracks) {
       setResult('gave_up');
       setStatus('gave_up');
       setStreak(0);
-      stopPlayback().catch(() => {});
+      stopPlayback();
       return;
     }
 
@@ -250,7 +250,7 @@ export function useGame(tracks) {
 
   const stop = useCallback(async () => {
     ++requestRef.current;
-    stopPlayback().catch(() => {});
+    stopPlayback();
     setStatus('paused');
   }, []);
 
@@ -278,7 +278,7 @@ export function useGame(tracks) {
 
   const reset = useCallback(async () => {
     ++requestRef.current;
-    await stopPlayback();
+    stopPlayback();
 
     setGameTrack(null);
     setStage(0);
